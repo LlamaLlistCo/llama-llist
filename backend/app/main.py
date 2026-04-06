@@ -1,16 +1,27 @@
 import time
 import socket
+import os
 import colorama
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from app.database import init_db
 from app.routers import notes
+from app.routers import tags
+from app.routers import todos
+from app.routers import files
 
 # 初始化 colorama
 colorama.init()
 
 app = FastAPI(title="Llama Llist API", version="0.1.0")
+
+# 静态文件（uploads）
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 # 获取本机局域网 IP
 def get_local_ip():
@@ -70,6 +81,9 @@ async def startup():
     print("=" * 60 + "\n")
 
 app.include_router(notes.router)
+app.include_router(tags.router)
+app.include_router(todos.router)
+app.include_router(files.router)
 
 @app.get("/")
 async def root():

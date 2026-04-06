@@ -1,14 +1,17 @@
 import { request } from '../common/network/httpClient';
 import { Note } from '../models/Note';
+import { Tag } from '../models/Tag';
 import router from '@ohos.router';
 
 @Entry
 @Component
 struct Index {
   @State notes: Note[] = [];
+  @State tags: Tag[] = [];
   @State isLoading: boolean = true;
 
   aboutToAppear() {
+    this.fetchTags();
     this.fetchNotes();
   }
 
@@ -24,6 +27,21 @@ struct Index {
     }
   }
 
+  async fetchTags() {
+    try {
+      const data = await request<Tag[]>('/tags/', 'GET');
+      this.tags = data;
+    } catch (e) {
+      console.error('加载标签失败', JSON.stringify(e));
+    }
+  }
+
+  tagNameById(tagId?: number): string {
+    if (typeof tagId !== 'number') return '';
+    const found = this.tags.find(t => t.id === tagId);
+    return found ? found.name : '';
+  }
+
   build() {
     Column() {
       // 标题栏
@@ -32,6 +50,18 @@ struct Index {
           .fontSize(24)
           .fontWeight(FontWeight.Bold);
         Blank();
+        Button('搜索')
+          .onClick(() => {
+            router.pushUrl({ url: 'pages/SearchPage' });
+          })
+        Button('标签')
+          .onClick(() => {
+            router.pushUrl({ url: 'pages/TagManage' });
+          })
+        Button('待办')
+          .onClick(() => {
+            router.pushUrl({ url: 'pages/TodoBoard' });
+          })
         Button('新建')
           .onClick(() => {
             router.pushUrl({ url: 'pages/NoteEdit' });
@@ -58,6 +88,15 @@ struct Index {
                   .fontSize(18)
                   .fontWeight(FontWeight.Medium)
                   .maxLines(1);
+                if (this.tagNameById(note.tag_id)) {
+                  Text(this.tagNameById(note.tag_id))
+                    .fontSize(12)
+                    .fontColor('#333')
+                    .padding({ left: 8, right: 8, top: 2, bottom: 2 })
+                    .backgroundColor('#EEE')
+                    .borderRadius(10)
+                    .margin({ top: 6 })
+                }
                 Text(note.content || '无内容')
                   .fontSize(14)
                   .fontColor('#666')
@@ -74,8 +113,7 @@ struct Index {
               .borderRadius(12)
             }
             .onClick(() => {
-              // 后续实现详情页，暂不处理
-              console.info('点击笔记', note.id);
+              router.pushUrl({ url: 'pages/NoteEdit', params: { id: note.id } });
             });
           }, (note: Note) => note.id.toString())
         }

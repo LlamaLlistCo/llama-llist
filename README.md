@@ -1,5 +1,6 @@
 - [🦙 Llama Llist – 灵感笔记与待办清单](#-llama-llist--灵感笔记与待办清单)
   - [📚 技术栈](#-技术栈)
+  - [✅ 本次完成内容（核心功能）](#-本次完成内容核心功能)
   - [📁 目录结构](#-目录结构)
   - [🚀 启动指南](#-启动指南)
     - [后端启动](#后端启动)
@@ -25,6 +26,26 @@
 | 通信 | HTTP + JSON (RESTful API) |
 | 文档 | FastAPI 自动生成 OpenAPI (Swagger) |
 
+## ✅ 本次完成内容（核心功能）
+
+对应作业要求「灵感笔记/待办清单」的核心功能，已完成：
+
+1. **多模态笔记**
+   - 支持文字标题、长文内容
+   - 支持插入图片（以图片路径/URL 形式保存到 `image_paths` 字段，并在编辑页预览）
+2. **分类/标签管理**
+   - 支持标签的新增、列表、删除
+   - 笔记支持选择标签并在列表展示
+3. **待办状态机**
+   - 待办支持 `pending（待处理）/ completed（已完成）/ delayed（已延期）` 三态切换
+   - 支持按状态筛选、创建/删除待办（可选截止日期）
+4. **搜索功能**
+   - 支持按关键字（标题/内容）搜索笔记
+   - 支持按日期范围（`created_from`～`created_to`）与标签筛选
+
+同时完成关键测试点：
+- **标题为空时保存校验拦截**：前端保存前校验 + 后端二次校验（新建/更新均校验）。
+
 ## 📁 目录结构
 ```
 llama-llist/
@@ -33,9 +54,9 @@ llama-llist/
 │       ├── pages/                            # 页面
 │       │   ├── Index.ets                     # 笔记列表页 ✅
 │       │   ├── NoteEdit.ets                  # 新增/编辑笔记页 ✅
-│       │   ├── TagManage.ets                 # 标签管理页 ⏳
-│       │   ├── TodoBoard.ets                 # 待办看板页 ⏳
-│       │   └── SearchPage.ets                # 搜索筛选页 ⏳
+│       │   ├── TagManage.ets                 # 标签管理页 ✅
+│       │   ├── TodoBoard.ets                 # 待办看板页 ✅
+│       │   └── SearchPage.ets                # 搜索筛选页 ✅
 │       ├── common/                           # 公共模块
 │       │   ├── network/
 │       │   │   └── httpClient.ets            # HTTP 请求封装 ✅
@@ -44,22 +65,23 @@ llama-llist/
 │       │   └── utils/                        # 工具函数（日期格式化等）⏳
 │       ├── models/                           # 数据模型
 │       │   ├── Note.ets                      # 笔记模型 ✅
-│       │   ├── Tag.ets                       # 标签模型 ⏳
-│       │   └── Todo.ets                      # 待办模型 ⏳
+│       │   ├── Tag.ets                       # 标签模型 ✅
+│       │   └── Todo.ets                      # 待办模型 ✅
 │       └── database/                         # 本地数据库（本次作业未使用，为后续预留）
 ├── backend/                                  # Python 后端
 │   ├── app/
 │   │   ├── __init__.py
 │   │   ├── main.py                           # FastAPI 入口（含 CORS、日志中间件）✅
 │   │   ├── database.py                       # 数据库连接（异步 SQLite）✅
-│   │   ├── models.py                         # SQLAlchemy 模型（Note, Tag）✅
-│   │   ├── schemas.py                        # Pydantic 模型（Note, Tag）✅
-│   │   ├── crud.py                           # 数据库操作（笔记 CRUD）✅
+│   │   ├── models.py                         # SQLAlchemy 模型（Note, Tag, Todo）✅
+│   │   ├── schemas.py                        # Pydantic 模型（Note, Tag, Todo）✅
+│   │   ├── crud.py                           # 数据库操作（Note/Tag/Todo CRUD）✅
 │   │   └── routers/                          # 路由模块
 │   │       ├── __init__.py
 │   │       ├── notes.py                      # 笔记相关 API ✅
-│   │       ├── tags.py                       # 标签相关 API ⏳
-│   │       └── todos.py                      # 待办相关 API ⏳
+│   │       ├── tags.py                       # 标签相关 API ✅
+│   │       ├── todos.py                      # 待办相关 API ✅
+│   │       └── files.py                      # 图片上传 API ✅
 │   ├── uploads/                              # 用户上传图片目录（自动生成）
 │   ├── notes.db                              # SQLite 数据库文件（自动生成）
 │   ├── requirements.txt                      # Python 依赖 ✅
@@ -129,13 +151,19 @@ llama-llist/
 | 方法   | 路径            | 说明                     | 状态码 |
 |--------|----------------|--------------------------|--------|
 | GET    | `/`            | 健康检查                 | 200    |
-| GET    | `/notes/`      | 获取笔记列表（支持分页） | 200    |
+| GET    | `/notes/`      | 获取笔记列表（支持分页/搜索筛选） | 200    |
 | POST   | `/notes/`      | 创建新笔记               | 201    |
 | GET    | `/notes/{id}`  | 获取单条笔记             | 200    |
 | PUT    | `/notes/{id}`  | 更新笔记                 | 200    |
 | DELETE | `/notes/{id}`  | 删除笔记                 | 204    |
 | GET    | `/tags/`       | 获取所有标签             | 200    |
 | POST   | `/tags/`       | 创建标签                 | 201    |
+| DELETE | `/tags/{id}`   | 删除标签                 | 204    |
+| GET    | `/todos/`      | 获取待办列表（支持筛选） | 200    |
+| POST   | `/todos/`      | 创建待办                 | 201    |
+| PUT    | `/todos/{id}`  | 更新待办（状态机切换等） | 200    |
+| DELETE | `/todos/{id}`  | 删除待办                 | 204    |
+| POST   | `/files/upload`| 上传图片（返回 `/uploads/...`） | 201    |
 | ...    | ...            | 更多接口见 `/docs`       | ...    |
 
 > 详细请求/响应格式请访问 `http://localhost:8000/docs`（后端启动后）
@@ -152,7 +180,7 @@ llama-llist/
 - `tags`：标签表（名称唯一）
 - `todos`：待办表（标题、状态、截止日期、关联笔记 ID）
 
-**已满足的功能**：笔记 CRUD、标签关联、待办基础结构。  
+**已满足的功能**：笔记 CRUD（含搜索筛选）、标签管理、待办状态机（含筛选）。  
 **后续可完善的方向**：
 
 | 方向 | 说明 |
