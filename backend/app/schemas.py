@@ -5,6 +5,8 @@ from typing import Optional, Literal
 # 笔记相关
 class NoteBase(BaseModel):
     title: str
+    summary: Optional[str] = None
+    view_type: Optional[str] = "default"
     content: Optional[str] = None
     image_paths: Optional[str] = None
     tag_id: Optional[int] = None
@@ -14,6 +16,8 @@ class NoteCreate(NoteBase):
 
 class NoteUpdate(BaseModel):
     title: Optional[str] = None
+    summary: Optional[str] = None       
+    view_type: Optional[str] = None     
     content: Optional[str] = None
     image_paths: Optional[str] = None
     tag_id: Optional[int] = None
@@ -40,10 +44,12 @@ class TagOut(TagBase):
         from_attributes = True
 
 TodoStatus = Literal["pending", "completed", "delayed"]
+TodoPriority = Literal["important_urgent", "important_not_urgent", "not_important_urgent", "not_important_not_urgent"]
 
 class TodoBase(BaseModel):
     title: str
     status: TodoStatus = "pending"
+    priority: TodoPriority = "important_urgent"
     deadline: Optional[datetime] = None
     note_id: Optional[int] = None
 
@@ -53,11 +59,27 @@ class TodoCreate(TodoBase):
 class TodoUpdate(BaseModel):
     title: Optional[str] = None
     status: Optional[TodoStatus] = None
+    priority: Optional[TodoPriority] = None
     deadline: Optional[datetime] = None
     note_id: Optional[int] = None
 
 class TodoOut(TodoBase):
     id: int
 
+    class Config:
+        from_attributes = True
+
+#模板相关
+class TemplateBase(BaseModel):
+    name: str
+    category: str
+    content_skeleton: str
+    icon: Optional[str] = None
+
+class TemplateCreate(TemplateBase):
+    pass
+
+class TemplateOut(TemplateBase):
+    id: int
     class Config:
         from_attributes = True

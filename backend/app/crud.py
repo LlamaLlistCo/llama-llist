@@ -105,6 +105,7 @@ async def get_todo(db: AsyncSession, todo_id: int):
 async def get_todos(
     db: AsyncSession,
     status: str | None = None,
+    priority: str | None = None,
     deadline_from=None,
     deadline_to=None,
     note_id: int | None = None,
@@ -115,6 +116,8 @@ async def get_todos(
     filters = []
     if status:
         filters.append(models.Todo.status == status)
+    if priority:
+        filters.append(models.Todo.priority == priority)
     if deadline_from:
         filters.append(models.Todo.deadline >= deadline_from)
     if deadline_to:
@@ -141,3 +144,59 @@ async def update_todo(db: AsyncSession, todo_id: int, payload: schemas.TodoUpdat
 async def delete_todo(db: AsyncSession, todo_id: int):
     await db.execute(delete(models.Todo).where(models.Todo.id == todo_id))
     await db.commit()
+
+
+async def get_templates(db: AsyncSession):
+    result = await db.execute(select(models.Template))
+    return result.scalars().all()
+
+async def create_template(db: AsyncSession, template: schemas.TemplateCreate):
+    db_template = models.Template(**template.dict())
+    db.add(db_template)
+    await db.commit()
+    await db.refresh(db_template)
+    return db_template
+
+async def delete_template(db: AsyncSession, template_id: int):
+    result = await db.execute(delete(models.Template).where(models.Template.id == template_id))
+    await db.commit()
+    return result.rowcount > 0
+
+async def init_default_templates(db: AsyncSession):
+    """初始化系统预设模板"""
+    # 1. 检查是否已经存在模板，避免重复插入
+    result = await db.execute(select(func.count(models.Template.id)))
+    count = result.scalar()
+    
+    if count > 0:
+        return # 如果表里有东西，就不初始化了
+
+    # 2. 定义预设模板数据
+    default_templates = [
+        {
+            "name": "📚 读书笔记",
+            "category": "书架",
+            "icon": "📖",
+            "content_skeleton": "# 书名：\n## 核心观点：\n- \n## 金句摘录：\n> \n## 思考与实践：\n"
+        },
+        {
+            "name": "🌿 心情随笔",
+            "category": "心情",
+            "icon": "🍃",
+            "content_skeleton": "日期：\n天气：\n心情：\n---\n今天发生的难忘的事：\n"
+        },
+        {
+            "name": "💼 会议记录",
+            "category": "会议",
+            "icon": "📝",
+            "content_skeleton": "# 会议主题：\n- 时间地点：\n- 参会人员：\n---\n### 议程内容：\n1. \n### 待办行动项：\n- [ ] "
+        }
+    ]
+
+    # 3. 批量插入
+    for t_data in default_templates:
+        db_template = models.Template(**t_data)
+        db.add(db_template)
+    
+    await db.commit()
+    print("✅ 系统预设模板初始化成功！")

@@ -3,176 +3,200 @@ import { Todo, TodoStatus } from '../models/Todo';
 import router from '@ohos.router';
 import promptAction from '@ohos.promptAction';
 
+interface TodoCreateRequest {
+  title: string;
+  deadline?: string;
+  priority: string;
+  status?: TodoStatus;
+}
+
+interface DatePickerResult {
+  year?: number;
+  month?: number;
+  day?: number;
+}
+
+interface PriorityConfig {
+  label: string;
+  color: string;
+  bg: string;
+}
+
+const priorityConfigs: Record<string, PriorityConfig> = {
+  'important_urgent': { label: '重要紧急', color: '#D32F2F', bg: '#FFEBEE' },
+  'important_not_urgent': { label: '重要不紧急', color: '#F57C00', bg: '#FFF3E0' },
+  'not_important_urgent': { label: '不重要紧急', color: '#1976D2', bg: '#E3F2FD' },
+  'not_important_not_urgent': { label: '不重要不紧急', color: '#388E3C', bg: '#E8F5E9' },
+};
+
 @Entry
 @Component
 struct TodoBoard {
-  @State todos: Todo[] = [];
   @State titleInput: string = '';
   @State deadlineInput: string = '';
-  @State statusFilter: TodoStatus | 'all' = 'all';
+  @State selectedDeadline: string | null = null;
+  @State selectedPriority: string = 'important_urgent';
   @State isSubmitting: boolean = false;
 
-  aboutToAppear() {
-    this.fetchTodos();
-  }
-
   build() {
-    Column({ space: 12 }) {
+    Column() {
+      // 顶部导航栏
       Row() {
-        Button('返回').onClick(() => router.back())
+        SymbolGlyph($r('sys.symbol.chevron_left'))
+          .fontSize(24)
+          .fontColor(['#705C53'])
+          .onClick(() => router.back())
+
         Blank()
-        Text('待办看板').fontSize(20).fontWeight(FontWeight.Medium)
+
+        Text('新增待办')
+          .fontSize(20)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#4A3933')
+
         Blank()
       }
       .width('100%')
-      .padding(16)
+      .padding({ left: 20, right: 20, top: 20, bottom: 16 })
 
-      Row({ space: 8 }) {
-        Button('全部')
-          .backgroundColor(this.statusFilter === 'all' ? '#333' : '#EEE')
-          .fontColor(this.statusFilter === 'all' ? '#FFF' : '#333')
-          .onClick(() => { this.statusFilter = 'all'; this.fetchTodos(); })
-        Button('待处理')
-          .backgroundColor(this.statusFilter === 'pending' ? '#333' : '#EEE')
-          .fontColor(this.statusFilter === 'pending' ? '#FFF' : '#333')
-          .onClick(() => { this.statusFilter = 'pending'; this.fetchTodos(); })
-        Button('已完成')
-          .backgroundColor(this.statusFilter === 'completed' ? '#333' : '#EEE')
-          .fontColor(this.statusFilter === 'completed' ? '#FFF' : '#333')
-          .onClick(() => { this.statusFilter = 'completed'; this.fetchTodos(); })
-        Button('已延期')
-          .backgroundColor(this.statusFilter === 'delayed' ? '#333' : '#EEE')
-          .fontColor(this.statusFilter === 'delayed' ? '#FFF' : '#333')
-          .onClick(() => { this.statusFilter = 'delayed'; this.fetchTodos(); })
-      }
-      .width('100%')
-      .padding({ left: 16, right: 16 })
-
-      Column({ space: 8 }) {
-        TextInput({ placeholder: '新增待办标题（必填）', text: this.titleInput })
-          .onChange((v: string) => this.titleInput = v)
-        TextInput({ placeholder: '截止日期（可选，YYYY-MM-DD）', text: this.deadlineInput })
-          .onChange((v: string) => this.deadlineInput = v)
-        Button('添加待办')
-          .enabled(!this.isSubmitting)
-          .onClick(() => this.createTodo())
-      }
-      .padding({ left: 16, right: 16 })
-      .width('100%')
-
-      if (this.todos.length === 0) {
-        Column() {
-          Text('暂无待办').fontSize(16).fontColor('#999')
-        }
-        .layoutWeight(1)
-        .justifyContent(FlexAlign.Center)
-      } else {
-        List({ space: 10 }) {
-          ForEach(this.todos, (todo: Todo) => {
-            ListItem() {
-              Column({ space: 8 }) {
-                Row() {
-                  Text(todo.title).fontSize(16).maxLines(2).layoutWeight(1)
-                  Button('删除')
-                    .backgroundColor('#FDECEC')
-                    .fontColor('#D93025')
-                    .onClick(() => this.deleteTodo(todo.id))
-                }
-                if (todo.deadline) {
-                  Text(`截止：${todo.deadline}`).fontSize(12).fontColor('#999')
-                }
-                Row({ space: 8 }) {
-                  Button('待处理')
-                    .backgroundColor(todo.status === 'pending' ? '#333' : '#EEE')
-                    .fontColor(todo.status === 'pending' ? '#FFF' : '#333')
-                    .onClick(() => this.setStatus(todo.id, 'pending'))
-                  Button('已完成')
-                    .backgroundColor(todo.status === 'completed' ? '#333' : '#EEE')
-                    .fontColor(todo.status === 'completed' ? '#FFF' : '#333')
-                    .onClick(() => this.setStatus(todo.id, 'completed'))
-                  Button('已延期')
-                    .backgroundColor(todo.status === 'delayed' ? '#333' : '#EEE')
-                    .fontColor(todo.status === 'delayed' ? '#FFF' : '#333')
-                    .onClick(() => this.setStatus(todo.id, 'delayed'))
-                }.flexWrap(FlexWrap.Wrap)
-              }
-              .padding(12)
-              .backgroundColor('#F5F5F5')
+      // 上方输入区域（标题 + 日期 + 优先级）
+      Scroll() {
+        Column({ space: 24 }) {
+          // 1. 标题
+          Column({ space: 8 }) {
+            Text('任务标题').fontSize(14).fontColor('#A89982')
+            TextInput({
+              placeholder: '请输入待办标题（必填）',
+              text: this.titleInput
+            })
+              .onChange((v: string) => this.titleInput = v)
+              .fontSize(16)
+              .fontColor('#4A3933')
+              .placeholderColor('#D2C4B0')
+              .backgroundColor('#FFFFFF')
               .borderRadius(12)
+              .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+              .height(52)
+          }
+
+          // 2. 截止日期
+          Column({ space: 8 }) {
+            Text('截止日期（可选）').fontSize(14).fontColor('#A89982')
+            Row() {
+              Text(this.deadlineInput || '点击选择日期')
+                .fontSize(16)
+                .fontColor(this.deadlineInput ? '#4A3933' : '#D2C4B0')
+                .layoutWeight(1)
+                .height(52)
+                .padding({ left: 16, right: 16 })
+                .backgroundColor('#FFFFFF')
+                .borderRadius(12)
+                .onClick(() => {
+                  DatePickerDialog.show({
+                    start: new Date('2024-01-01'),
+                    end: new Date('2030-12-31'),
+                    onAccept: (value: DatePickerResult) => {
+                      if (value.year !== undefined && value.month !== undefined && value.day !== undefined) {
+                        const m = (value.month + 1).toString().padStart(2, '0');
+                        const d = value.day.toString().padStart(2, '0');
+                        this.deadlineInput = `${value.year}-${m}-${d}`;
+                        this.selectedDeadline = this.deadlineInput;
+                      }
+                    }
+                  });
+                })
             }
-          }, (todo: Todo) => todo.id.toString())
+          }
+
+          // 3. 优先级选择
+          Column({ space: 8 }) {
+            Text('重要紧急程度').fontSize(14).fontColor('#A89982')
+            List({ space: 10 }) {
+              ForEach(['important_urgent', 'important_not_urgent', 'not_important_urgent', 'not_important_not_urgent'], (p: string) => {
+                ListItem() {
+                  Text(this.getPriorityLabel(p))
+                    .fontSize(15)
+                    .fontColor(this.selectedPriority === p ? '#FFF' : '#705C53')
+                    .padding({ left: 20, right: 20, top: 12, bottom: 12 })
+                    .backgroundColor(this.selectedPriority === p ? '#705C53' : '#EFEBE9')
+                    .borderRadius(12)
+                    .onClick(() => this.selectedPriority = p)
+                }
+              })
+            }
+            .listDirection(Axis.Horizontal)
+            .scrollBar(BarState.Off)
+          }
         }
-        .layoutWeight(1)
-        .padding({ left: 16, right: 16, bottom: 16 })
+        .padding({ left: 20, right: 20, top: 10 })
       }
+      .align(Alignment.Top)
+      .layoutWeight(1)
+
+      // 下方留空（以后扩展其他功能）
+      // Blank()
+
+      // 添加按钮（固定在底部）
+      Button('添加待办')
+        .width('100%')
+        .height(52)
+        .fontSize(16)
+        .fontColor('#FFFFFF')
+        .backgroundColor('#705C53')
+        .borderRadius(12)
+        .margin({ left: 20, right: 20, bottom: 30 })
+        .enabled(!this.isSubmitting && this.titleInput.trim().length > 0)
+        .onClick(() => this.createTodo())
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#FFF')
+    .backgroundColor('#F9F8F4')
   }
 
-  async fetchTodos() {
-    try {
-      const qs = this.statusFilter === 'all' ? '' : `?status=${this.statusFilter}`;
-      const data = await request<Todo[]>(`/todos/${qs}`, 'GET');
-      this.todos = data;
-    } catch (e) {
-      promptAction.showToast({ message: '加载待办失败' });
-      console.error('加载待办失败', JSON.stringify(e));
-    }
+  private getPriorityLabel(p: string): string {
+    const map: Record<string, string> = {
+      'important_urgent': '重要紧急',
+      'important_not_urgent': '重要不紧急',
+      'not_important_urgent': '不重要紧急',
+      'not_important_not_urgent': '不重要不紧急'
+    };
+    return map[p] || p;
   }
 
   async createTodo() {
     const title = this.titleInput.trim();
     if (!title) {
-      promptAction.showToast({ message: '待办标题不能为空' });
+      promptAction.showToast({ message: '🦙 待办标题不能为空' });
       return;
-    }
-    let deadlineIso: string | undefined = undefined;
-    const d = this.deadlineInput.trim();
-    if (d) {
-      const parsed = new Date(d);
-      if (!Number.isNaN(parsed.getTime())) {
-        deadlineIso = parsed.toISOString();
-      } else {
-        promptAction.showToast({ message: '截止日期格式不正确' });
-        return;
-      }
     }
 
     this.isSubmitting = true;
     try {
-      await request<Todo>('/todos/', 'POST', { title, deadline: deadlineIso });
-      this.titleInput = '';
-      this.deadlineInput = '';
-      await this.fetchTodos();
-      promptAction.showToast({ message: '添加成功' });
+      let initialState: TodoStatus = 'pending';
+      if (this.selectedDeadline) {
+        const now = new Date().getTime();
+        const deadlineTime = new Date(this.selectedDeadline).getTime();
+        // 如果选择的截止日期（天）早于今天，直接设为延期
+        // 注意：DatePickerDialog 返回的是日期零点，这里做简单判定
+        if (deadlineTime < now) {
+          initialState = 'delayed';
+        }
+      }
+
+      const payload: Record<string, string | undefined> = {
+        'title': title,
+        'deadline': this.selectedDeadline ?? undefined,
+        'priority': this.selectedPriority,
+        'status': initialState as string
+      };
+
+      await request<Todo>('/todos/', 'POST', payload);
+      promptAction.showToast({ message: '待办已添加 ✓' });
+      router.back();   // 返回首页
     } catch (e) {
-      promptAction.showToast({ message: '添加失败' });
-      console.error('添加待办失败', JSON.stringify(e));
+      promptAction.showToast({ message: '添加失败，请重试' });
     } finally {
       this.isSubmitting = false;
-    }
-  }
-
-  async setStatus(id: number, status: TodoStatus) {
-    try {
-      await request<Todo>(`/todos/${id}`, 'PUT', { status });
-      await this.fetchTodos();
-    } catch (e) {
-      promptAction.showToast({ message: '更新状态失败' });
-      console.error('更新待办失败', JSON.stringify(e));
-    }
-  }
-
-  async deleteTodo(id: number) {
-    try {
-      await request<object>(`/todos/${id}`, 'DELETE');
-      await this.fetchTodos();
-      promptAction.showToast({ message: '删除成功' });
-    } catch (e) {
-      promptAction.showToast({ message: '删除失败' });
-      console.error('删除待办失败', JSON.stringify(e));
     }
   }
 }

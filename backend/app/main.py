@@ -7,10 +7,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from app.database import init_db
+from app.database import init_db, AsyncSessionLocal
 from app.routers import notes
 from app.routers import tags
 from app.routers import todos
 from app.routers import files
+from app.routers import templates
+from app import crud
 
 # 初始化 colorama
 colorama.init()
@@ -72,6 +75,13 @@ app.add_middleware(LogMiddleware)
 @app.on_event("startup")
 async def startup():
     await init_db()
+
+    async with AsyncSessionLocal() as db:
+        try:
+            await crud.init_default_templates(db)
+        except Exception as e:
+            print(f"❌ 初始化模板失败: {e}")
+
     local_ip = get_local_ip()
     print("\n" + "=" * 60)
     print(f"✅ {colorama.Fore.GREEN}Llama Llist 后端已成功启动！{colorama.Style.RESET_ALL}")
@@ -84,6 +94,7 @@ app.include_router(notes.router)
 app.include_router(tags.router)
 app.include_router(todos.router)
 app.include_router(files.router)
+app.include_router(templates.router)
 
 @app.get("/")
 async def root():

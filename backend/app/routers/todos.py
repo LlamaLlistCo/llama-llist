@@ -10,6 +10,7 @@ router = APIRouter(prefix="/todos", tags=["todos"])
 @router.get("/", response_model=List[schemas.TodoOut])
 async def list_todos(
     status: Optional[schemas.TodoStatus] = None,
+    priority: Optional[schemas.TodoPriority] = None,
     deadline_from: Optional[datetime] = None,
     deadline_to: Optional[datetime] = None,
     note_id: Optional[int] = None,
@@ -20,6 +21,7 @@ async def list_todos(
     return await crud.get_todos(
         db,
         status=status,
+        priority=priority,
         deadline_from=deadline_from,
         deadline_to=deadline_to,
         note_id=note_id,
