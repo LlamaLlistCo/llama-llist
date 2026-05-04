@@ -127,7 +127,7 @@ llama-llist/
 2. **配置 hdc 环境变量（用于端口转发或设备连接）**  
 - 请确保安装了**OpenHarmony SDK**
 
-<img src="image-1.png" alt="alt text" />
+<img src="assets/image-1.png" alt="alt text" />
 
 - 找到 HarmonyOS SDK 安装目录下的 `toolchains` 文件夹（默认 `C:\Users\你的用户名\AppData\Local\Huawei\Sdk\openharmony\20\toolchains`）。  
 - 将该路径添加到系统 `PATH` 环境变量中，或者在使用 `hdc` 命令时使用绝对路径。  
@@ -141,21 +141,21 @@ llama-llist/
 ### 1. 欢迎页
 持续一段时间后进入主页
 
-<img src="image-2.png" alt="alt text" width="30%" />
+<img src="assets/image-2.png" alt="alt text" width="30%" />
 
 ### 2. Llama Meadow 草原---笔记区
 
-<img src="image-3.png" alt="alt text" width="30%" />
+<img src="assets/image-3.png" alt="alt text" width="30%" />
 
 标题和标语    搜索键
 标签呈现【左右滑动，最后是新增/管理标签快捷键】
 
-<img src="image-9.png" alt="alt text" width="30%" />
+<img src="assets/image-9.png" alt="alt text" width="30%" />
 
 笔记呈现【上下滑切换笔记，左滑出现删除键】
 右下角新建笔记
 
-<img src="image-4.png" alt="alt text" width="30%" />
+<img src="assets/image-4.png" alt="alt text" width="30%" />
 
 ---
 
@@ -163,7 +163,7 @@ llama-llist/
 返回 确认键
 从上到下依次为：标题、摘要、标签、正文、文字输入功能区【模板放在该栏最后，使用时弹出小框】、笔记功能区【照片、清空和保存】
 
-<img src="image-5.png" alt="alt text" width="30%" /><img src="image-6.png" alt="alt text" width="30%" /><img src="image-8.png" alt="alt text" width="30%" />
+<img src="assets/image-5.png" alt="alt text" width="30%" /><img src="assets/image-6.png" alt="alt text" width="30%" /><img src="assets/image-8.png" alt="alt text" width="30%" />
 
 
 
@@ -174,7 +174,7 @@ llama-llist/
 任务卡片
 右下角新建待办
 
-<img src="image-10.png" alt="alt text" width="30%" /><img src="image-11.png" alt="alt text" width="30%" /><img src="image-12.png" alt="alt text" width="30%" />
+<img src="assets/image-10.png" alt="alt text" width="30%" /><img src="assets/image-11.png" alt="alt text" width="30%" /><img src="assets/image-12.png" alt="alt text" width="30%" />
 
 
 
@@ -190,7 +190,7 @@ llama-llist/
 主题装扮【待实现】
 设置中心【待实现】
 
-<img src="image-13.png" alt="alt text" width="30%" />
+<img src="assets/image-13.png" alt="alt text" width="30%" />
 
 
 ## 六、API 接口概览
