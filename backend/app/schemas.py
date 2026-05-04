@@ -83,3 +83,16 @@ class TemplateOut(TemplateBase):
     id: int
     class Config:
         from_attributes = True
+
+
+# 简单的键值配置
+class SettingIn(BaseModel):
+    key: str
+    value: str
+
+class SettingOut(BaseModel):
+    key: str
+    value: str
+
+    class Config:
+        from_attributes = True

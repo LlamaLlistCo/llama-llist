@@ -13,6 +13,7 @@ from app.routers import tags
 from app.routers import todos
 from app.routers import files
 from app.routers import templates
+from app.routers import ai
 from app import crud
 
 # 初始化 colorama
@@ -95,6 +96,7 @@ app.include_router(tags.router)
 app.include_router(todos.router)
 app.include_router(files.router)
 app.include_router(templates.router)
+app.include_router(ai.router)
 
 @app.get("/")
 async def root():

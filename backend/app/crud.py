@@ -200,3 +200,22 @@ async def init_default_templates(db: AsyncSession):
     
     await db.commit()
     print("✅ 系统预设模板初始化成功！")
+
+
+# ----- 简单设置 CRUD -----
+async def get_setting(db: AsyncSession, key: str):
+    result = await db.execute(select(models.Setting).where(models.Setting.key == key))
+    row = result.scalars().first()
+    return row.value if row else None
+
+
+async def set_setting(db: AsyncSession, key: str, value: str):
+    result = await db.execute(select(models.Setting).where(models.Setting.key == key))
+    row = result.scalars().first()
+    if row:
+        row.value = value
+    else:
+        row = models.Setting(key=key, value=value)
+        db.add(row)
+    await db.commit()
+    return row

@@ -12,7 +12,7 @@ interface TodoCreateRequest {
 
 interface TodoUpdateRequest {
   status: TodoStatus;
-  priority?:string;
+  priority?: TodoPriority;
 }
 
 interface StatusItem {
@@ -26,6 +26,19 @@ interface StatusConfig {
   bg: string;
 }
 
+interface DialogResult {
+  index: number;
+}
+
+interface AISettingsResponse {
+  provider_url: string;
+}
+
+interface AISettingsPayload {
+  provider_url: string;
+  api_key?: string;
+}
+
 @Entry
 @Component
 struct Index {
@@ -34,12 +47,12 @@ struct Index {
   @State currentIndex: number = 0;
   private controller: TabsController = new TabsController();
 
-  // 笔记分类
-  // @State categories: string[] = ['全部', '📚 书架', '🌿 心情', '✍️ 随笔', '💼 会议', '＋'];
-  @State selectedTagId: number | null = null; // 新增：记录当前选中的标签ID，null代表“全部”
+  @State selectedTagId: number | null = null;
   @State selectedCategory: number = 0;
+  @State aiProviderUrl: string = '';
+  @State aiApiKeyInput: string = '';
+  @State settingsDialogController: CustomDialogController | null = null;
 
-  // 待办相关状态
   @State todos: Todo[] = [];
   @State todoTitleInput: string = '';
   @State todoDeadlineInput: string = '';
@@ -48,7 +61,7 @@ struct Index {
   @State isSubmittingTodo: boolean = false;
   @State showTodoInput: boolean = false;
 
-  onPageShow() {
+  onPageShow(): void {
     this.fetchNotes();
     if (this.currentIndex === 1) {
       this.fetchTodos();
@@ -57,44 +70,42 @@ struct Index {
     this.checkAndUpdateExpiredTodos();
   }
 
-  aboutToAppear() {
+  aboutToAppear(): void {
     this.fetchTags();
     this.fetchNotes();
     this.fetchTodos();
     this.checkAndUpdateExpiredTodos();
   }
 
-  // ── 笔记数据 ──
-  async fetchNotes() {
+  async fetchNotes(): Promise<void> {
     try {
       const data = await request<Note[]>('/notes/', 'GET');
       this.notes = data ?? [];
     } catch (e) {
-      console.error('加载笔记失败', JSON.stringify(e));
+      const error = e as Error;
+      console.error('加载笔记失败', error.message);
     }
   }
 
-  // ── 笔记删除逻辑 ──
-  async deleteNote(id: number) {
+  async deleteNote(id: number): Promise<void> {
     try {
-      // 调用后端接口
       await request<object>(`/notes/${id}`, 'DELETE');
       promptAction.showToast({ message: '笔记已删除' });
-      // 重新拉取数据以刷新 UI
       await this.fetchNotes();
     } catch (e) {
-      console.error('删除笔记失败', JSON.stringify(e));
+      const error = e as Error;
+      console.error('删除笔记失败', error.message);
       promptAction.showToast({ message: '删除失败' });
     }
   }
 
-
-  async fetchTags() {
+  async fetchTags(): Promise<void> {
     try {
       const data = await request<Tag[]>('/tags/', 'GET');
       this.tags = data ?? [];
     } catch (e) {
-      console.error('加载标签失败', JSON.stringify(e));
+      const error = e as Error;
+      console.error('加载标签失败', error.message);
     }
   }
 
@@ -104,18 +115,18 @@ struct Index {
     return found ? found.name : '';
   }
 
-  // 按标签 ID 获取笔记
-  async fetchNotesByTag(tagId: number) {
+  async fetchNotesByTag(tagId: number): Promise<void> {
     try {
-      // 假设你的后端接口支持 ?tag_id= 过滤，或者使用 search 接口
       const data = await request<Note[]>(`/notes/?tag_id=${tagId}`, 'GET');
       this.notes = data ?? [];
     } catch (e) {
+      const error = e as Error;
+      console.error('获取分类笔记失败', error.message);
       promptAction.showToast({ message: '获取分类笔记失败' });
     }
   }
 
-  async fetchTodos() {
+  async fetchTodos(): Promise<void> {
     try {
       const params: string[] = [];
       if (this.statusFilter !== 'all') params.push(`status=${this.statusFilter}`);
@@ -124,19 +135,11 @@ struct Index {
       const qs = params.length > 0 ? '?' + params.join('&') : '';
       const data = await request<Todo[]>(`/todos/${qs}`, 'GET');
 
-      // --- 修改开始：增加排序逻辑 ---
       let rawList = data ?? [];
-
-      // 排序规则：
-      // 1. 已完成的任务（completed）永远排在最后
-      // 2. 其余任务按截止时间（deadline）正序排列（越近越靠前）
-      // 3. 没有截止时间的任务排在有截止时间的任务后面
       this.todos = rawList.sort((a: Todo, b: Todo) => {
-        // 首先处理“已完成”状态的置底
         if (a.status === 'completed' && b.status !== 'completed') return 1;
         if (a.status !== 'completed' && b.status === 'completed') return -1;
 
-        // 其次处理时间排序
         if (!a.deadline && !b.deadline) return 0;
         if (!a.deadline) return 1;
         if (!b.deadline) return -1;
@@ -145,16 +148,13 @@ struct Index {
         const timeB = new Date(b.deadline).getTime();
         return timeA - timeB;
       });
-      // --- 修改结束 ---
-
-      // this.todos = data ?? [];
-      // this.checkAndUpdateExpiredTodos();
     } catch (e) {
-      console.error('加载待办失败', JSON.stringify(e));
+      const error = e as Error;
+      console.error('加载待办失败', error.message);
     }
   }
 
-  async createTodo() {
+  async createTodo(): Promise<void> {
     const title = this.todoTitleInput.trim();
     if (!title) {
       promptAction.showToast({ message: '🦙 待办标题不能为空' });
@@ -181,68 +181,74 @@ struct Index {
       await this.fetchTodos();
       promptAction.showToast({ message: '任务已添加 ✓' });
     } catch (e) {
+      const error = e as Error;
+      console.error('添加待办失败', error.message);
       promptAction.showToast({ message: '添加失败' });
     } finally {
       this.isSubmittingTodo = false;
     }
   }
 
-  async setTodoStatus(id: number, status: TodoStatus) {
+  async setTodoStatus(id: number, status: TodoStatus): Promise<void> {
     try {
       const payload: TodoUpdateRequest = { status };
       await request<Todo>(`/todos/${id}`, 'PUT', payload);
       await this.fetchTodos();
     } catch (e) {
+      const error = e as Error;
+      console.error('更新状态失败', error.message);
       promptAction.showToast({ message: '更新状态失败' });
     }
   }
 
-  async setTodoPriority(id: number, priority: string) {
-    // 1. 立即更新本地状态数组，通过 map 返回新数组来触发 UI 刷新
+  async setTodoPriority(id: number, priority: TodoPriority): Promise<void> {
+    // 不使用展开运算符，手动构造新对象
     const nextTodos = this.todos.map((t: Todo): Todo => {
       if (t.id === id) {
         return {
           id: t.id,
           title: t.title,
           status: t.status,
-          priority: priority as TodoPriority,
+          priority: priority,
           deadline: t.deadline,
           note_id: t.note_id
-        } as Todo;
+        };
       }
       return t;
     });
-
     this.todos = nextTodos;
 
     try {
-      // 2. 发送请求同步到后端
-      const payload: Record<string, string> = { 'priority': priority };
+      const payload: TodoUpdateRequest = { status: this.getCurrentStatusById(id), priority };
       await request<Todo>(`/todos/${id}`, 'PUT', payload);
-
-      // 3. 后台静默刷新，确保与数据库数据一致（如排序逻辑）
       await this.fetchTodos();
       promptAction.showToast({ message: '优先级已更新' });
     } catch (e) {
+      const error = e as Error;
+      console.error('更新优先级失败', error.message);
       promptAction.showToast({ message: '更新优先级失败' });
-      // 失败时可以考虑重新 fetchTodos 以回滚本地状态
       await this.fetchTodos();
     }
   }
 
-  async deleteTodo(id: number) {
+  private getCurrentStatusById(id: number): TodoStatus {
+    const todo = this.todos.find(t => t.id === id);
+    return todo ? todo.status : 'pending';
+  }
+
+  async deleteTodo(id: number): Promise<void> {
     try {
       await request<object>(`/todos/${id}`, 'DELETE');
       await this.fetchTodos();
       promptAction.showToast({ message: '已删除' });
     } catch (e) {
+      const error = e as Error;
+      console.error('删除待办失败', error.message);
       promptAction.showToast({ message: '删除失败' });
     }
   }
 
-  // 自动检查并更新过期任务
-  // 自动检查并更新过期任务（推荐最终版）
-  async checkAndUpdateExpiredTodos() {
+  async checkAndUpdateExpiredTodos(): Promise<void> {
     try {
       const now = new Date().getTime();
       const updatePromises: Promise<Todo | null>[] = [];
@@ -250,7 +256,6 @@ struct Index {
       for (const todo of this.todos) {
         if (todo.deadline && todo.status === 'pending') {
           const deadlineTime = new Date(todo.deadline).getTime();
-
           if (deadlineTime < now) {
             const updatePayload: TodoUpdateRequest = { status: 'delayed' };
             updatePromises.push(
@@ -260,16 +265,14 @@ struct Index {
         }
       }
 
-      // 等待所有更新请求完成
       if (updatePromises.length > 0) {
         await Promise.all(updatePromises);
         promptAction.showToast({ message: `已自动更新 ${updatePromises.length} 个延期任务` });
       }
-
-      // 最后统一刷新一次列表
       await this.fetchTodos();
     } catch (e) {
-      console.error('自动更新延期任务失败', e);
+      const error = e as Error;
+      console.error('自动更新延期任务失败', error.message);
     }
   }
 
@@ -283,7 +286,6 @@ struct Index {
     }
   }
 
-  // 获取回退状态的辅助方法
   getFallbackStatus(deadline?: string): TodoStatus {
     if (!deadline) return 'pending';
     const now = new Date().getTime();
@@ -291,7 +293,6 @@ struct Index {
     return isOverdue ? 'delayed' : 'pending';
   }
 
-  // 获取回退文字的辅助方法
   getFallbackLabel(deadline?: string): string {
     return this.getFallbackStatus(deadline) === 'delayed' ? '已延期' : '待处理';
   }
@@ -326,10 +327,7 @@ struct Index {
     return map[p] || '#EFEBE9';
   }
 
-
-
-  // ── 主体布局 ──
-  build() {
+  build(): void {
     Column() {
       Tabs({ barPosition: BarPosition.End, controller: this.controller }) {
         TabContent() {
@@ -346,7 +344,6 @@ struct Index {
       }
       .onChange((index: number) => {
         this.currentIndex = index;
-        // 切到任务 Tab 时刷新
         if (index === 1) {
           this.fetchTodos();
         }
@@ -360,8 +357,7 @@ struct Index {
     .backgroundColor('#F9F8F4')
   }
 
-  // ── 自定义 TabBar ──
-  @Builder TabBuilder(title: string, index: number, icon: string) {
+  @Builder TabBuilder(title: string, index: number, icon: string): void {
     Column() {
       SymbolGlyph($r(icon))
         .fontSize(22)
@@ -375,8 +371,7 @@ struct Index {
     .width('100%')
   }
 
-  // ── Tab1：笔记草原 ──
-  @Builder MeadowHeader() {
+  @Builder MeadowHeader(): void {
     Row() {
       Column() {
         Text('Llama Meadow')
@@ -403,14 +398,11 @@ struct Index {
   }
 
   @Builder
-  NotesTab() {
-    // 必须用 Stack 包裹，才能让按钮浮在列表上面
+  NotesTab(): void {
     Stack({ alignContent: Alignment.BottomEnd }) {
       Column() {
-        // 1. 头部标题栏
         this.MeadowHeader()
 
-        // 2. 分类横排列表
         Scroll() {
           Row({ space: 12 }) {
             Text('全部')
@@ -451,30 +443,18 @@ struct Index {
         .scrollBar(BarState.Off)
         .margin({ top: 10, bottom: 10 })
 
-        // 3. 笔记列表
         if (this.notes.length === 0) {
-          this.EmptyState() // 确保方法名对应上
+          this.EmptyState()
         } else {
           List({ space: 16 }) {
-            // ForEach(this.notes, (note: Note) => {
-            //   ListItem() {
-            //     this.NoteCard(note)
-            //   }
-            //   .onClick(() => {
-            //     router.pushUrl({ url: 'pages/NoteEdit', params: { id: note.id } });
-            //   })
-            // }, (item: Note) => item.id.toString())
             ForEach(this.notes, (note: Note) => {
               ListItem() {
                 this.NoteCard(note)
               }
-              // 注入滑动操作
               .swipeAction({
                 end: {
                   builder: () => { this.noteSwipeBuilder(note.id) },
-                  onAction: () => {
-                    // 这里可以处理滑动到最右侧触发的动作，目前已在按钮 onClick 处理
-                  },
+                  onAction: () => {},
                   actionAreaDistance: 80,
                 },
                 edgeEffect: SwipeEdgeEffect.Spring
@@ -493,7 +473,6 @@ struct Index {
       .width('100%')
       .height('100%')
 
-      // 4. 右下角悬浮按钮 🦙
       Button({ type: ButtonType.Circle }) {
         Text('+').fontSize(28).fontColor('#FFF')
       }
@@ -510,7 +489,7 @@ struct Index {
   }
 
   @Builder
-  noteSwipeBuilder(id: number) {
+  noteSwipeBuilder(id: number): void {
     Row() {
       Button() {
         SymbolGlyph($r('sys.symbol.trash'))
@@ -519,7 +498,7 @@ struct Index {
       }
       .width(60)
       .height(60)
-      .backgroundColor('#C0392B') // 红色代表危险操作
+      .backgroundColor('#C0392B')
       .type(ButtonType.Circle)
       .margin({ left: 15, right: 15 })
       .onClick(() => {
@@ -530,11 +509,9 @@ struct Index {
     .height('100%')
   }
 
-  // ── Tab2：任务 Tab（双维度筛选 + 列表 + 加号跳转）──
-  @Builder PeakSection() {
+  @Builder PeakSection(): void {
     Stack({ alignContent: Alignment.BottomEnd }) {
       Column() {
-        // 标题（保留你原来的风格）
         Row() {
           Column() {
             Text('Llama Peak')
@@ -552,7 +529,6 @@ struct Index {
         .width('100%')
         .padding({ left: 24, right: 24, top: 30, bottom: 15 })
 
-        // 第一行：任务进度筛选
         List({ space: 8 }) {
           ForEach(['all', 'pending', 'completed', 'delayed'], (s: TodoStatus | 'all') => {
             ListItem() {
@@ -574,7 +550,6 @@ struct Index {
         .padding({ left: 20, right: 20 })
         .scrollBar(BarState.Off)
 
-        // 第二行：重要紧急程度筛选
         List({ space: 8 }) {
           ForEach(['all', 'important_urgent', 'important_not_urgent', 'not_important_urgent', 'not_important_not_urgent'], (p: string) => {
             ListItem() {
@@ -596,7 +571,6 @@ struct Index {
         .padding({ left: 20, right: 20 })
         .scrollBar(BarState.Off)
 
-        // 待办列表
         if (this.todos.length === 0) {
           Column({ space: 12 }) {
             Text('🏔️').fontSize(52)
@@ -615,7 +589,7 @@ struct Index {
               ListItem() {
                 this.TodoCard(todo)
               }
-            }, (todo: Todo) => todo.id.toString() +  "_" + todo.priority)
+            }, (todo: Todo) => todo.id.toString() + "_" + todo.priority)
           }
           .layoutWeight(1)
           .padding({ left: 20, right: 20, top: 12, bottom: 20 })
@@ -627,7 +601,6 @@ struct Index {
       .height('100%')
       .backgroundColor('#F9F8F4')
 
-      // 右下角 + 按钮 → 跳转到 TodoBoard 页面
       Button({ type: ButtonType.Circle }) {
         Text('+').fontSize(28).fontColor('#FFF')
       }
@@ -643,8 +616,7 @@ struct Index {
     .backgroundColor('#F9F8F4')
   }
 
-  // ── Tab3：行囊 ──
-  @Builder PackSection() {
+  @Builder PackSection(): void {
     Column() {
       Text('Llama Pack')
         .fontSize(28)
@@ -661,7 +633,7 @@ struct Index {
         this.PackItem('🏷️ 标签管理', () => router.pushUrl({ url: 'pages/TagManage' }))
         this.PackItem('🔍 笔记搜索', () => router.pushUrl({ url: 'pages/SearchPage' }))
         this.PackItem('🎨 主题装扮', () => {})
-        this.PackItem('⚙️ 设置中心', () => {})
+        this.PackItem('⚙️ 设置中心', () => this.openSettingsDialog())
       }
       .backgroundColor('#FFF')
       .borderRadius(16)
@@ -673,7 +645,7 @@ struct Index {
     .alignItems(HorizontalAlign.Start)
   }
 
-  @Builder PackItem(title: string, onClick: () => void) {
+  @Builder PackItem(title: string, onClick: () => void): void {
     Row() {
       Text(title).fontSize(16).fontColor('#4A3933')
       Blank()
@@ -684,8 +656,55 @@ struct Index {
     .onClick(onClick)
   }
 
-  // ── 待办卡片 ──
-  @Builder TodoCard(todo: Todo) {
+  async openSettingsDialog(): Promise<void> {
+    try {
+      const data = await request<AISettingsResponse>('/settings/ai', 'GET');
+      // 处理 data 可能为 null 的情况
+      if (data && typeof data.provider_url === 'string') {
+        this.aiProviderUrl = data.provider_url;
+      } else {
+        this.aiProviderUrl = '';
+      }
+      this.aiApiKeyInput = '';
+      if (this.settingsDialogController) {
+        this.settingsDialogController.close();
+      }
+      this.settingsDialogController = new CustomDialogController({
+        builder: SettingsDialog({
+          aiProviderUrl: this.aiProviderUrl,
+          aiApiKeyInput: this.aiApiKeyInput,
+          onSave: (url: string, key: string) => this.saveSettings(url, key),
+          onCancel: () => {}
+        }),
+        autoCancel: true,
+        alignment: DialogAlignment.Center,
+        customStyle: true
+      });
+      this.settingsDialogController.open();
+    } catch (e) {
+      const error = e as Error;
+      console.error('加载 AI 设置失败', error.message);
+      promptAction.showToast({ message: '加载设置失败' });
+    }
+  }
+
+  async saveSettings(providerUrl: string, apiKey: string): Promise<void> {
+    try {
+      const payload: AISettingsPayload = { provider_url: providerUrl };
+      if (apiKey && apiKey.trim()) payload.api_key = apiKey.trim();
+      await request<object>('/settings/ai', 'POST', payload);
+      promptAction.showToast({ message: 'AI 设置已保存' });
+      if (this.settingsDialogController) {
+        this.settingsDialogController.close();
+      }
+    } catch (e) {
+      const error = e as Error;
+      console.error('保存 AI 设置失败', error.message);
+      promptAction.showToast({ message: '保存失败' });
+    }
+  }
+
+  @Builder TodoCard(todo: Todo): void {
     Column({ space: 10 }) {
       Row() {
         Text(todo.title)
@@ -730,11 +749,8 @@ struct Index {
       Divider().color('#EFEBE9').strokeWidth(1)
 
       Row() {
-        // --- 动态状态切换按钮组 ---
         Row({ space: 8 }) {
-          // 情况 A：任务当前是“待处理”或“已延期”
           if (todo.status === 'pending' || todo.status === 'delayed') {
-            // 按钮：变为“已完成”
             Text('已完成')
               .fontSize(12)
               .fontColor('#FFF')
@@ -743,7 +759,6 @@ struct Index {
               .borderRadius(10)
               .onClick(() => this.setTodoStatus(todo.id, 'completed'))
 
-            // 当前状态展示（置灰且不可点击，实现禁止待处理和已延期互转）
             Text(todo.status === 'pending' ? '待处理' : '已延期')
               .fontSize(12)
               .fontColor('#A89982')
@@ -751,10 +766,7 @@ struct Index {
               .backgroundColor('#EFEBE9')
               .borderRadius(10)
               .opacity(0.6)
-          }
-          // 情况 B：任务当前是“已完成”
-          else if (todo.status === 'completed') {
-            // “已完成”状态高亮
+          } else if (todo.status === 'completed') {
             Text('已完成')
               .fontSize(12)
               .fontColor('#A89982')
@@ -763,14 +775,13 @@ struct Index {
               .borderRadius(10)
               .opacity(0.6)
 
-            Text(this.getFallbackLabel(todo.deadline)) // 直接调用方法
+            Text(this.getFallbackLabel(todo.deadline))
               .fontSize(12)
               .fontColor('#FFF')
               .padding({ left: 12, right: 12, top: 5, bottom: 5 })
               .backgroundColor('#705C53')
               .borderRadius(10)
               .onClick(() => {
-                // 直接调用方法获取状态
                 const status = this.getFallbackStatus(todo.deadline);
                 this.setTodoStatus(todo.id, status);
               })
@@ -779,7 +790,6 @@ struct Index {
 
         Blank()
 
-        // --- 快捷优先级圆点（点击即刻变色） ---
         Row({ space: 10 }) {
           Circle({ width: 12, height: 12 }).fill('#D32F2F')
             .onClick(() => this.setTodoPriority(todo.id, 'important_urgent'))
@@ -806,8 +816,7 @@ struct Index {
     .shadow({ radius: 10, color: '#084A3933', offsetY: 4 })
   }
 
-  // ── 笔记卡片 ──
-  @Builder NoteCard(note: Note) {
+  @Builder NoteCard(note: Note): void {
     Column({ space: 8 }) {
       Text(note.title)
         .fontSize(18)
@@ -823,7 +832,7 @@ struct Index {
           .maxLines(2)
           .lineHeight(20)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .margin({ top: 4, bottom: 4 }) // 增加适量间距让卡片更美观
+          .margin({ top: 4, bottom: 4 })
       }
 
       Row() {
@@ -854,12 +863,70 @@ struct Index {
     .shadow({ radius: 15, color: '#0D4A3933', offsetY: 6 })
   }
 
-  // ── 空状态 ──
-  @Builder EmptyState() {
+  @Builder EmptyState(): void {
     Column() {
       Text('🦙').fontSize(60)
       Text('草坪空荡荡，快去采撷灵感吧').fontSize(14).fontColor('#A89982').margin({ top: 10 })
-    }.layoutWeight(1).justifyContent(FlexAlign.Center).width('100%')
+    }
+    .layoutWeight(1)
+    .justifyContent(FlexAlign.Center)
+    .width('100%')
+  }
+}
+
+@CustomDialog
+struct SettingsDialog {
+  controller: CustomDialogController = new CustomDialogController({ builder: () => {} });
+  aiProviderUrl: string = '';
+  aiApiKeyInput: string = '';
+  onSave: (url: string, key: string) => void = () => {};
+  onCancel: () => void = () => {};
+
+  @State localUrl: string = '';
+  @State localKey: string = '';
+
+  aboutToAppear(): void {
+    this.localUrl = this.aiProviderUrl;
+    this.localKey = this.aiApiKeyInput;
   }
 
+  build(): void {
+    Column({ space: 12 }) {
+      Text('AI 设置')
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .padding({ top: 8 })
+
+      TextInput({ text: this.localUrl, placeholder: 'AI Provider URL (e.g. https://api.openai.com/v1/chat/completions)' })
+        .fontSize(14)
+        .padding(8)
+        .backgroundColor('#FFF')
+        .onChange((v: string) => this.localUrl = v)
+
+      TextInput({ text: this.localKey, placeholder: 'API Key (will be stored on server)' })
+        .fontSize(14)
+        .padding(8)
+        .backgroundColor('#FFF')
+        .onChange((v: string) => this.localKey = v)
+
+      Row({ space: 8 }) {
+        Button('取消')
+          .onClick(() => {
+            this.onCancel();
+            this.controller.close();
+          })
+        Button('保存')
+          .backgroundColor('#705C53')
+          .fontColor('#FFF')
+          .onClick(() => {
+            this.onSave(this.localUrl, this.localKey);
+            this.controller.close();
+          })
+      }
+    }
+    .padding({ left: 16, right: 16, top: 12, bottom: 16 })
+    .backgroundColor(Color.White)
+    .borderRadius(12)
+    .width('90%')
+  }
 }
