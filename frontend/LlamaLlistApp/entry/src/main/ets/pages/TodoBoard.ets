@@ -37,6 +37,7 @@ struct TodoBoard {
   @State selectedDeadline: string | null = null;
   @State selectedPriority: string = 'important_urgent';
   @State isSubmitting: boolean = false;
+  @StorageLink('themeBg') themeBg: string = '#F9F8F4';
 
   build() {
     Column() {
@@ -150,7 +151,7 @@ struct TodoBoard {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#F9F8F4')
+    .backgroundColor(this.themeBg)
   }
 
   private getPriorityLabel(p: string): string {

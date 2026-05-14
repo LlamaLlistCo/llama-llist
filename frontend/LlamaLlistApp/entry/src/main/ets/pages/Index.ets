@@ -2,6 +2,8 @@ import { request } from '../common/network/httpClient';
 import { Note } from '../models/Note';
 import { Tag } from '../models/Tag';
 import { Todo, TodoStatus, TodoPriority } from '../models/Todo';
+import { THEMES, ThemeConfig } from '../common/constants/Theme';
+import { appTheme } from '../common/constants/ThemeManager';
 import router from '@ohos.router';
 import promptAction from '@ohos.promptAction';
 
@@ -52,6 +54,12 @@ struct Index {
   @State aiProviderUrl: string = '';
   @State aiApiKeyInput: string = '';
   @State settingsDialogController: CustomDialogController | null = null;
+  @State themeDialogController: CustomDialogController | null = null;
+  @State currentTheme: ThemeConfig = THEMES[0];
+  @StorageLink('themeBg') themeBg: string = '#F9F8F4';
+  @StorageLink('themePrimary') themePrimary: string = '#705C53';
+  @StorageLink('themeText') themeText: string = '#4A3933';
+  @StorageLink('themeSecondary') themeSecondary: string = '#A89982';
 
   @State todos: Todo[] = [];
   @State todoTitleInput: string = '';
@@ -75,6 +83,7 @@ struct Index {
     this.fetchNotes();
     this.fetchTodos();
     this.checkAndUpdateExpiredTodos();
+    this.loadCurrentTheme();
   }
 
   async fetchNotes(): Promise<void> {
@@ -276,6 +285,22 @@ struct Index {
     }
   }
 
+  loadCurrentTheme(): void {
+    this.currentTheme = appTheme.getTheme();
+  }
+
+  async switchTheme(themeId: number): Promise<void> {
+    appTheme.setTheme(themeId);
+    this.currentTheme = appTheme.getTheme();
+    try {
+      await request<object>(`/settings/theme/${themeId}`, 'POST');
+      promptAction.showToast({ message: '主题已切换' });
+    } catch (e) {
+      const error = e as Error;
+      console.error('切换主题失败', error.message);
+    }
+  }
+
   todoStatusConfig(status: TodoStatus): StatusConfig {
     if (status === 'completed') {
       return { label: '已完成', color: '#2E7D32', bg: '#E8F5E9' };
@@ -354,7 +379,7 @@ struct Index {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#F9F8F4')
+    .backgroundColor(this.themeBg)
   }
 
   @Builder TabBuilder(title: string, index: number, icon: string): void {
@@ -485,7 +510,7 @@ struct Index {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#F9F8F4')
+    .backgroundColor(this.themeBg)
   }
 
   @Builder
@@ -599,7 +624,7 @@ struct Index {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor('#F9F8F4')
+      .backgroundColor(this.themeBg)
 
       Button({ type: ButtonType.Circle }) {
         Text('+').fontSize(28).fontColor('#FFF')
@@ -613,7 +638,7 @@ struct Index {
         router.pushUrl({ url: 'pages/TodoBoard' });
       })
     }
-    .backgroundColor('#F9F8F4')
+    .backgroundColor(this.themeBg)
   }
 
   @Builder PackSection(): void {
@@ -632,7 +657,7 @@ struct Index {
       List({ space: 1 }) {
         this.PackItem('🏷️ 标签管理', () => router.pushUrl({ url: 'pages/TagManage' }))
         this.PackItem('🔍 笔记搜索', () => router.pushUrl({ url: 'pages/SearchPage' }))
-        this.PackItem('🎨 主题装扮', () => {})
+        this.PackItem('🎨 主题装扮', () => this.openThemeDialog())
         this.PackItem('⚙️ 设置中心', () => this.openSettingsDialog())
       }
       .backgroundColor('#FFF')
@@ -643,6 +668,7 @@ struct Index {
     .width('100%')
     .height('100%')
     .alignItems(HorizontalAlign.Start)
+    .backgroundColor(this.themeBg)
   }
 
   @Builder PackItem(title: string, onClick: () => void): void {
@@ -654,6 +680,28 @@ struct Index {
     .width('100%')
     .padding(18)
     .onClick(onClick)
+  }
+
+  openThemeDialog(): void {
+    if (this.themeDialogController) {
+      this.themeDialogController.close();
+    }
+    this.themeDialogController = new CustomDialogController({
+      builder: ThemeDialog({
+        currentThemeId: this.currentTheme.id,
+        onSelect: (themeId: number) => {
+          this.switchTheme(themeId);
+          if (this.themeDialogController) {
+            this.themeDialogController.close();
+          }
+        },
+        onCancel: () => {}
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      customStyle: true
+    });
+    this.themeDialogController.open();
   }
 
   async openSettingsDialog(): Promise<void> {
@@ -927,6 +975,68 @@ struct SettingsDialog {
     .padding({ left: 16, right: 16, top: 12, bottom: 16 })
     .backgroundColor(Color.White)
     .borderRadius(12)
+    .width('90%')
+  }
+}
+
+@CustomDialog
+struct ThemeDialog {
+  controller: CustomDialogController = new CustomDialogController({ builder: () => {} });
+  currentThemeId: number = 1;
+  onSelect: (themeId: number) => void = () => {};
+  onCancel: () => void = () => {};
+
+  build(): void {
+    Column({ space: 16 }) {
+      Text('🎨 选择主题装扮')
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor('#4A3933')
+        .padding({ top: 8 })
+
+      ForEach(THEMES, (theme: ThemeConfig) => {
+        Row({ space: 14 }) {
+          // 左侧色块预览
+          Row({ space: 6 }) {
+            Circle({ width: 18, height: 18 }).fill(theme.primary)
+            Circle({ width: 18, height: 18 }).fill(theme.secondary)
+            Circle({ width: 18, height: 18 }).fill(theme.accent)
+          }
+
+          Text(theme.name)
+            .fontSize(15)
+            .fontColor('#4A3933')
+            .layoutWeight(1)
+
+          // 当前选中标记
+          if (this.currentThemeId === theme.id) {
+            Text('✓')
+              .fontSize(16)
+              .fontColor('#705C53')
+              .fontWeight(FontWeight.Bold)
+          }
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+        .backgroundColor(this.currentThemeId === theme.id ? '#EFEBE9' : '#FAFAFA')
+        .borderRadius(12)
+        .onClick(() => {
+          this.onSelect(theme.id);
+        })
+      }, (theme: ThemeConfig) => theme.id.toString())
+
+      Button('取消')
+        .width('100%')
+        .backgroundColor('#EFEBE9')
+        .fontColor('#705C53')
+        .onClick(() => {
+          this.onCancel();
+          this.controller.close();
+        })
+    }
+    .padding({ left: 16, right: 16, top: 12, bottom: 16 })
+    .backgroundColor(Color.White)
+    .borderRadius(16)
     .width('90%')
   }
 }

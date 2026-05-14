@@ -13,6 +13,7 @@ struct TagManage {
   @State tags: Tag[] = [];
   @State nameInput: string = '';
   @State isSubmitting: boolean = false;
+  @StorageLink('themeBg') themeBg: string = '#F9F8F4';
 
   aboutToAppear() {
     this.fetchTags();
@@ -131,7 +132,7 @@ struct TagManage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#F9F8F4')
+    .backgroundColor(this.themeBg)
   }
 
   async fetchTags() {

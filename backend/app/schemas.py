@@ -96,3 +96,20 @@ class SettingOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# 主题相关
+class ThemeBase(BaseModel):
+    name: str
+    primary_color: str
+    secondary_color: str
+    background_color: str
+    accent_color: str
+    text_color: str
+    is_dark: bool = False
+
+class ThemeOut(ThemeBase):
+    id: int
+
+    class Config:
+        from_attributes = True

@@ -219,3 +219,78 @@ async def set_setting(db: AsyncSession, key: str, value: str):
         db.add(row)
     await db.commit()
     return row
+
+
+# ----- 主题 CRUD -----
+async def get_theme(db: AsyncSession, theme_id: int):
+    result = await db.execute(select(models.Theme).where(models.Theme.id == theme_id))
+    return result.scalars().first()
+
+
+async def get_themes(db: AsyncSession):
+    result = await db.execute(select(models.Theme).order_by(models.Theme.id.asc()))
+    return result.scalars().all()
+
+
+async def init_default_themes(db: AsyncSession):
+    """初始化系统预设主题"""
+    result = await db.execute(select(func.count(models.Theme.id)))
+    count = result.scalar()
+    
+    if count > 0:
+        return
+
+    default_themes = [
+    {
+        "name": "原野棕",
+        "primary_color": "#705C53",
+        "secondary_color": "#A89982",
+        "background_color": "#F9F8F4",
+        "accent_color": "#E67E22",
+        "text_color": "#4A3933",
+        "is_dark": False
+    },
+    {
+        "name": "晴空蓝",
+        "primary_color": "#4A90C4",
+        "secondary_color": "#7FB3D3",
+        "background_color": "#EFF6FB",
+        "accent_color": "#2980B9",
+        "text_color": "#1A3A52",
+        "is_dark": False
+    },
+    {
+        "name": "嫩芽绿",
+        "primary_color": "#5A9E6F",
+        "secondary_color": "#8FBF9F",
+        "background_color": "#F0F8F2",
+        "accent_color": "#27AE60",
+        "text_color": "#1B4332",
+        "is_dark": False
+    },
+    {
+        "name": "樱花粉",
+        "primary_color": "#C4788A",
+        "secondary_color": "#D9A0AE",
+        "background_color": "#FDF0F3",
+        "accent_color": "#E91E8C",
+        "text_color": "#4A1A28",
+        "is_dark": False
+    },
+    {
+        "name": "薰衣草紫",
+        "primary_color": "#7E6FAE",
+        "secondary_color": "#A99FCC",
+        "background_color": "#F3F0FA",
+        "accent_color": "#9B59B6",
+        "text_color": "#2E1A47",
+        "is_dark": False
+    }
+]
+
+    for theme_data in default_themes:
+        db_theme = models.Theme(**theme_data)
+        db.add(db_theme)
+
+    await db.commit()
+    print("✅ 系统预设主题初始化成功！")

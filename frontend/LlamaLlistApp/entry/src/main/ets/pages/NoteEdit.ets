@@ -320,6 +320,9 @@ struct AIDialog {
   @State isLoading: boolean = true;
   @State aiResult: AIResult = { keywords: [], labels: [], todos: [], priority: 'normal', summary: '' };
   @State aiError: string = '';
+  @State selectedKeywords: Set<number> = new Set();
+  @State selectedTodos: Set<number> = new Set();
+  @StorageLink('themeBg') themeBg: string = '#F9F8F4';
 
   async aboutToAppear(): Promise<void> {
     await this.fetchData();
@@ -327,6 +330,8 @@ struct AIDialog {
 
   async fetchData(): Promise<void> {
     this.isLoading = true;
+    this.selectedKeywords.clear();
+    this.selectedTodos.clear();
     try {
       // 1. 本地抽取
       const extractRes = await httpRequest<AIExtractResponse>(`/notes/${this.noteId}/ai/extract`, 'POST');
@@ -352,145 +357,497 @@ struct AIDialog {
       } catch (e) {
         const error = e as Error;
         console.warn('cloud summarize failed', error.message);
-        this.aiError = '云端摘要不可用，已切换到本地抽取';
+        this.aiError = '💡 提示: 云端摘要不可用，已使用本地抽取';
       }
     } catch (e) {
       const error = e as Error;
       console.error('AI 抽取失败', error.message);
-      this.aiError = 'AI 抽取失败，请稍后重试';
+      this.aiError = '❌ AI 抽取失败，请稍后重试';
+    } finally {
+      this.isLoading = false;
+    }
+  }
+
+  async regenerate(): Promise<void> {
+    this.isLoading = true;
+    try {
+      const res = await httpRequest<AIExtractResponse>(`/notes/${this.noteId}/ai/regenerate`, 'POST');
+      if (res && res.result) {
+        this.aiResult = {
+          keywords: res.result.keywords || [],
+          labels: res.result.labels || [],
+          todos: res.result.todos || [],
+          priority: res.result.priority || 'normal',
+          summary: this.aiResult.summary
+        };
+        this.aiError = '';
+      }
+    } catch (e) {
+      const error = e as Error;
+      promptAction.showToast({ message: '重新生成失败: ' + error.message });
     } finally {
       this.isLoading = false;
     }
   }
 
   build(): void {
-    Column({ space: 12 }) {
+    Column() {
       Row() {
-        Text('AI 建议')
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#4A3933');
-        Blank();
-        SymbolGlyph($r('sys.symbol.xmark'))
-          .fontSize(20)
-          .fontColor(['#A89982'])
-          .onClick(() => this.controller.close());
-      }
+        Column({ space: 5 }) {
+          Text('AI 建议')
+            .fontSize(20)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#3F332D')
 
-      Divider().color('#EFEBE9');
+          Text('根据当前笔记生成摘要、关键词和待办')
+            .fontSize(13)
+            .fontColor('#9A8B7A')
+        }
+        .alignItems(HorizontalAlign.Start)
+
+        Blank()
+
+        Text('✕')
+          .fontSize(16)
+          .fontColor('#8E7D6B')
+          .width(34)
+          .height(34)
+          .textAlign(TextAlign.Center)
+          .backgroundColor('#F4EFE8')
+          .borderRadius(17)
+          .onClick(() => this.controller.close())
+      }
+      .width('100%')
+      .padding({ left: 24, right: 20, top: 22, bottom: 14 })
 
       if (this.isLoading) {
-        Column({ space: 10 }) {
-          LoadingProgress().width(40).height(40).color('#705C53');
-          Text('AI 正在思考...').fontSize(14).fontColor('#A89982');
+        Column({ space: 14 }) {
+          LoadingProgress()
+            .width(38)
+            .height(38)
+            .color('#9B7250')
+
+          Text('AI 正在分析笔记内容...')
+            .fontSize(15)
+            .fontColor('#8E7D6B')
         }
-        .padding(30)
         .width('100%')
+        .height(260)
         .justifyContent(FlexAlign.Center)
       } else {
-        // 摘要区域（使用 TextArea 支持换行）
-        Column() {
-          Text('摘要（可编辑）').fontSize(13).fontColor('#A89982');
-          TextArea({ text: this.aiResult.summary, placeholder: 'AI 摘要' })
-            .fontSize(14)
-            .fontColor('#4A3933')
-            .backgroundColor('#FFF')
-            .borderRadius(8)
-            .padding(8)
-            .height(100)  // 固定高度，允许滚动
-            .onChange((v: string) => { this.aiResult.summary = v; });
-        }
-
-        if (this.aiError) {
-          Text(this.aiError).fontSize(12).fontColor('#C0392B')
-            .padding({ top: 6, bottom: 6 });
-        }
-
-        // 关键词列表（纵向排列）
-        Column() {
-          Text('关键词').fontSize(13).fontColor('#A89982');
-          Column({ space: 8 }) {
-            ForEach(this.aiResult.keywords, (kw: string, idx: number) => {
-              TextInput({ text: kw })
-                .fontSize(13)
-                .fontColor('#4A3933')
-                .backgroundColor('#FFF')
+        Scroll() {
+          Column({ space: 18 }) {
+            if (this.aiError) {
+              Text(this.aiError)
+                .fontSize(14)
+                .fontColor('#B7791F')
+                .width('100%')
+                .padding({ left: 14, right: 14, top: 10, bottom: 10 })
+                .backgroundColor('#FFF8E8')
                 .borderRadius(12)
-                .padding({ left: 8, right: 8 })
-                .onChange((v: string) => {
-                  const newKeywords = [...this.aiResult.keywords];
-                  newKeywords[idx] = v;
-                  this.aiResult.keywords = newKeywords;
-                });
-            }, (kw: string, i: number) => i.toString())
-          }
-        }
+            }
 
-        // 待办项列表（纵向排列，每个可编辑删除）
-        Column() {
-          Text('建议的待办项（可编辑或删除）').fontSize(13).fontColor('#A89982');
-          Column({ space: 8 }) {
-            ForEach(this.aiResult.todos, (t: string, idx: number) => {
-              Row({ space: 8 }) {
-                TextInput({ text: t })
-                  .fontSize(14)
+            Column({ space: 10 }) {
+              Row() {
+                Text('摘要')
+                  .fontSize(16)
+                  .fontWeight(FontWeight.Medium)
                   .fontColor('#4A3933')
-                  .backgroundColor('#FFF')
-                  .borderRadius(8)
-                  .layoutWeight(1)
-                  .onChange((v: string) => {
-                    const newTodos = [...this.aiResult.todos];
-                    newTodos[idx] = v;
-                    this.aiResult.todos = newTodos;
-                  });
-                SymbolGlyph($r('sys.symbol.trash'))
-                  .fontSize(18)
-                  .fontColor(['#C0392B'])
-                  .onClick(() => {
-                    const newTodos = this.aiResult.todos.filter((_, i) => i !== idx);
-                    this.aiResult.todos = newTodos;
-                  });
+
+                Blank()
+
+                Text(`${this.aiResult.summary.length}/300`)
+                  .fontSize(12)
+                  .fontColor('#A89982')
               }
-            }, (t: string, i: number) => 'todo-' + i);
-          }
+              .width('100%')
 
-          Row() {
-            Button('添加待办')
-              .fontSize(14)
-              .fontColor('#705C53')
-              .backgroundColor('#EFEBE9')
-              .onClick(() => {
-                this.aiResult.todos = [...this.aiResult.todos, ''];
-              });
+              TextArea({ text: this.aiResult.summary, placeholder: '暂无摘要...' })
+                .fontSize(15)
+                .fontColor('#4A3933')
+                .backgroundColor('#FBF8F3')
+                .borderRadius(14)
+                .border({ width: 1, color: '#EEE3D6' })
+                .padding(14)
+                .height(118)
+                .maxLength(300)
+                .showCounter(false)
+                .onChange((v: string) => {
+                  this.aiResult.summary = v;
+                })
+            }
+            .padding(16)
+            .backgroundColor('#FFFFFF')
+            .borderRadius(18)
+            .shadow({ radius: 10, color: '#12000000', offsetY: 3 })
+
+            Column({ space: 12 }) {
+              Row() {
+                Text('关键词')
+                  .fontSize(16)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor('#4A3933')
+
+                Blank()
+
+                Text(`${this.aiResult.keywords.length} 个`)
+                  .fontSize(12)
+                  .fontColor('#A89982')
+              }
+              .width('100%')
+
+              Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap }) {
+                ForEach(this.aiResult.keywords, (kw: string, idx: number) => {
+                  Row({ space: 6 }) {
+                    Text(kw)
+                      .fontSize(14)
+                      .fontColor('#6B5A42')
+
+                    SymbolGlyph($r('sys.symbol.xmark_circle_fill'))
+                      .fontSize(15)
+                      .fontColor(['#CBBBA5'])
+                      .onClick(() => {
+                        this.aiResult.keywords = this.aiResult.keywords.filter((_, i) => i !== idx);
+                      })
+                  }
+                  .padding({ left: 12, right: 10, top: 7, bottom: 7 })
+                  .margin({ right: 8, bottom: 8 })
+                  .backgroundColor('#F3EBDD')
+                  .borderRadius(18)
+                }, (kw: string, i: number) => 'kw-' + i)
+              }
+              .width('100%')
+            }
+            .padding(16)
+            .backgroundColor('#FFFFFF')
+            .borderRadius(18)
+            .shadow({ radius: 10, color: '#12000000', offsetY: 3 })
+
+            Column({ space: 12 }) {
+              Row() {
+                Text('待办事项')
+                  .fontSize(16)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor('#4A3933')
+
+                Blank()
+
+                Text(`${this.aiResult.todos.length} 项`)
+                  .fontSize(12)
+                  .fontColor('#A89982')
+              }
+              .width('100%')
+
+              Column({ space: 10 }) {
+                ForEach(this.aiResult.todos, (t: string, idx: number) => {
+                  Row({ space: 10 }) {
+                    Column()
+                      .width(8)
+                      .height(8)
+                      .borderRadius(4)
+                      .backgroundColor('#8BA078')
+                      .flexShrink(0)
+
+                    TextInput({ text: t })
+                      .fontSize(14)
+                      .fontColor('#4A3933')
+                      .backgroundColor(Color.Transparent)
+                      .layoutWeight(1)
+                      .onChange((v: string) => {
+                        const newTodos = [...this.aiResult.todos];
+                        newTodos[idx] = v;
+                        this.aiResult.todos = newTodos;
+                      })
+
+                    Text('✕')
+                      .fontSize(15)
+                      .fontColor('#B8A996')
+                      .onClick(() => {
+                        this.aiResult.todos = this.aiResult.todos.filter((_, i) => i !== idx);
+                      })
+                  }
+                  .width('100%')
+                  .padding({ left: 14, right: 12, top: 10, bottom: 10 })
+                  .backgroundColor('#FBF8F3')
+                  .borderRadius(13)
+                }, (t: string, i: number) => 'todo-' + i)
+
+                Row({ space: 6 }) {
+                  Text('+')
+                    .fontSize(18)
+                    .fontColor('#9B7250')
+
+                  Text('添加待办')
+                    .fontSize(14)
+                    .fontColor('#9B7250')
+                }
+                .width('100%')
+                .padding({ top: 10, bottom: 10 })
+                .justifyContent(FlexAlign.Center)
+                .border({ width: 1, color: '#E8DCCA', style: BorderStyle.Dashed })
+                .borderRadius(13)
+                .onClick(() => {
+                  this.aiResult.todos = [...this.aiResult.todos, ''];
+                })
+              }
+              .width('100%')
+            }
+            .padding(16)
+            .backgroundColor('#FFFFFF')
+            .borderRadius(18)
+            .shadow({ radius: 10, color: '#12000000', offsetY: 3 })
           }
+          .width('100%')
+          .padding({ left: 20, right: 20, top: 6, bottom: 10 })
         }
+        .scrollable(ScrollDirection.Vertical)
+        .scrollBar(BarState.Off)
+        .layoutWeight(1)
 
-        Row({ space: 8 }) {
-          Button('将摘要写回')
+        Row({ space: 10 }) {
+          Button('重新生成')
             .fontSize(14)
-            .fontColor('#FFFFFF')
-            .backgroundColor('#705C53')
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#6F6254')
+            .backgroundColor('#EFE8DD')
+            .borderRadius(14)
+            .height(42)
+            .layoutWeight(1)
+            .onClick(() => this.regenerate())
+
+          Button('应用摘要')
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#6F6254')
+            .backgroundColor('#EFE8DD')
+            .borderRadius(14)
+            .height(42)
+            .layoutWeight(1)
             .onClick(() => {
               this.onApplySummary(this.aiResult.summary);
               this.controller.close();
-            });
+            })
 
-          Button('应用为待办')
+          Button('作为待办')
             .fontSize(14)
+            .fontWeight(FontWeight.Medium)
             .fontColor('#FFFFFF')
-            .backgroundColor('#27AE60')
+            .backgroundColor('#6F5647')
+            .borderRadius(14)
+            .height(42)
+            .layoutWeight(1)
             .onClick(() => {
               this.onApplyTodos(this.aiResult.todos.filter(t => t.trim() !== ''));
               this.controller.close();
-            });
+            })
         }
+        .width('100%')
+        .padding({ left: 20, right: 20, top: 12, bottom: 20 })
       }
     }
-    .padding({ left: 20, right: 20, top: 16, bottom: 20 })
-    .backgroundColor(Color.White)
-    .borderRadius(16)
-    .width('90%')
+    .width('92%')
+    .height('76%')
+    .backgroundColor(this.themeBg)
+    .borderRadius(24)
+    .clip(true)
   }
+  // build(): void {
+  //   Column({ space: 12 }) {
+  //     // 标题栏
+  //     Row() {
+  //       Text('🤖 AI 建议')
+  //         .fontSize(18)
+  //         .fontWeight(FontWeight.Bold)
+  //         .fontColor('#4A3933');
+  //       Blank();
+  //       SymbolGlyph($r('sys.symbol.xmark'))
+  //         .fontSize(20)
+  //         .fontColor(['#A89982'])
+  //         .onClick(() => this.controller.close());
+  //     }
+  //     .width('100%')
+  //     .padding({ left: 12, right: 12, top: 12, bottom: 12 });
+  //
+  //     Divider().color('#EFEBE9');
+  //
+  //     if (this.isLoading) {
+  //       Column({ space: 10 }) {
+  //         LoadingProgress().width(40).height(40).color('#705C53');
+  //         Text('AI 正在思考...').fontSize(14).fontColor('#A89982');
+  //       }
+  //       .padding(40)
+  //       .width('100%')
+  //       .justifyContent(FlexAlign.Center)
+  //     } else {
+  //       Scroll() {
+  //         Column({ space: 16 }) {
+  //           // 摘要区域
+  //           Column({ space: 8 }) {
+  //             Row({ space: 6 }) {
+  //               Text('📝 摘要').fontSize(14).fontColor('#4A3933').fontWeight(FontWeight.Medium);
+  //               Text(`(${this.aiResult.summary.length}/300)`).fontSize(11).fontColor('#A89982');
+  //             }
+  //             TextArea({ text: this.aiResult.summary, placeholder: '摘要内容...' })
+  //               .fontSize(13)
+  //               .fontColor('#4A3933')
+  //               .backgroundColor('#F9F8F4')
+  //               .borderRadius(8)
+  //               .padding(10)
+  //               .height(100)
+  //               .maxLength(300)
+  //               .showCounter(false)
+  //               .onChange((v: string) => { this.aiResult.summary = v; });
+  //           }
+  //
+  //           if (this.aiError) {
+  //             Row() {
+  //               Text(this.aiError).fontSize(12).fontColor('#E67E22')
+  //                 .layoutWeight(1);
+  //             }
+  //             .padding(10)
+  //             .backgroundColor('#FFF3E0')
+  //             .borderRadius(6)
+  //             .width('100%');
+  //           }
+  //
+  //           // 关键词标签区域
+  //           Column({ space: 8 }) {
+  //             Row({ space: 6 }) {
+  //               Text('🏷️ 关键词').fontSize(14).fontColor('#4A3933').fontWeight(FontWeight.Medium);
+  //               Text(`(${this.aiResult.keywords.length})`).fontSize(11).fontColor('#A89982');
+  //             }
+  //
+  //             Flex({ wrap: FlexWrap.Wrap }) {
+  //               ForEach(this.aiResult.keywords, (kw: string, idx: number) => {
+  //                 Row({ space: 4 }) {
+  //                   Text(kw)
+  //                     .fontSize(12)
+  //                     .fontColor('#705C53')
+  //                     .maxLines(1)
+  //                     .textOverflow({ overflow: TextOverflow.Ellipsis });
+  //
+  //                   SymbolGlyph($r('sys.symbol.xmark_circle_fill'))
+  //                     .fontSize(14)
+  //                     .fontColor(['#A89982'])
+  //                     .onClick(() => {
+  //                       const newKw = this.aiResult.keywords.filter((_, i) => i !== idx);
+  //                       this.aiResult.keywords = newKw;
+  //                     });
+  //                 }
+  //                 .padding({ left: 10, right: 8, top: 6, bottom: 6 })
+  //                 .margin({ right: 8, bottom: 8 })
+  //                 .backgroundColor('#EFEBE9')
+  //                 .borderRadius(14);
+  //               }, (kw: string, i: number) => 'kw-' + i)
+  //             }
+  //             .width('100%')
+  //           }
+  //
+  //           // 待办项区域
+  //           Column({ space: 8 }) {
+  //             Row({ space: 6 }) {
+  //               Text('✓ 待办').fontSize(14).fontColor('#4A3933').fontWeight(FontWeight.Medium);
+  //               Text(`(${this.aiResult.todos.length})`).fontSize(11).fontColor('#A89982');
+  //             }
+  //
+  //             Column({ space: 6 }) {
+  //               ForEach(this.aiResult.todos, (t: string, idx: number) => {
+  //                 Row({ space: 8 }) {
+  //                   Checkbox()
+  //                     .width(18)
+  //                     .height(18)
+  //                     .selectedColor('#705C53');
+  //                   TextInput({ text: t })
+  //                     .fontSize(13)
+  //                     .fontColor('#4A3933')
+  //                     .backgroundColor(Color.Transparent)
+  //                     .layoutWeight(1)
+  //                     .onChange((v: string) => {
+  //                       const newTodos = [...this.aiResult.todos];
+  //                       newTodos[idx] = v;
+  //                       this.aiResult.todos = newTodos;
+  //                     });
+  //                   SymbolGlyph($r('sys.symbol.trash'))
+  //                     .fontSize(16)
+  //                     .fontColor(['#C0392B'])
+  //                     .onClick(() => {
+  //                       const newTodos = this.aiResult.todos.filter((_, i) => i !== idx);
+  //                       this.aiResult.todos = newTodos;
+  //                     });
+  //                 }
+  //                 .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+  //                 .backgroundColor('#F9F8F4')
+  //                 .borderRadius(6)
+  //                 .width('100%');
+  //               }, (t: string, i: number) => 'todo-' + i)
+  //             }
+  //             .width('100%');
+  //
+  //             // 添加待办按钮
+  //             Row({ space: 8 }) {
+  //               SymbolGlyph($r('sys.symbol.plus_circle'))
+  //                 .fontSize(16)
+  //                 .fontColor(['#705C53']);
+  //               Text('添加待办')
+  //                 .fontSize(13)
+  //                 .fontColor('#705C53');
+  //             }
+  //             .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+  //             .backgroundColor('#EFEBE9')
+  //             .borderRadius(6)
+  //             .width('100%')
+  //             .justifyContent(FlexAlign.Center)
+  //             .onClick(() => {
+  //               this.aiResult.todos = [...this.aiResult.todos, ''];
+  //             });
+  //           }
+  //         }
+  //         .padding({ left: 12, right: 12 })
+  //         .width('100%');
+  //       }
+  //       .scrollable(ScrollDirection.Vertical)
+  //       .scrollBar(BarState.Off)
+  //       .layoutWeight(1);
+  //
+  //       // 底部操作按钮
+  //       Row({ space: 8 }) {
+  //         Button('重新生成')
+  //           .fontSize(13)
+  //           .fontColor('#FFF')
+  //           .backgroundColor('#ffb79898')
+  //           .onClick(() => this.regenerate())
+  //           .layoutWeight(1);
+  //
+  //         Button('应用摘要')
+  //           .fontSize(13)
+  //           .fontColor('#FFF')
+  //           .backgroundColor('#ffa78b61')
+  //           .onClick(() => {
+  //             this.onApplySummary(this.aiResult.summary);
+  //             this.controller.close();
+  //           })
+  //           .layoutWeight(1);
+  //
+  //         Button('作为待办')
+  //           .fontSize(13)
+  //           .fontColor('#FFF')
+  //           .backgroundColor('#ffd6b857')
+  //           .onClick(() => {
+  //             this.onApplyTodos(this.aiResult.todos.filter(t => t.trim() !== ''));
+  //             this.controller.close();
+  //           })
+  //           .layoutWeight(1);
+  //       }
+  //       .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+  //       .width('100%');
+  //     }
+  //   }
+  //   .padding({ left: 16, right: 16, top: 12, bottom: 16 })
+  //   .backgroundColor(Color.White)
+  //   .borderRadius(20)
+  //   .width('90%')
+  //   .height('80%');
+  // }
 }
 
 interface AIResult {
@@ -518,6 +875,7 @@ struct NoteEdit {
   @State currentColor: string = '#4A3933';
   @State aiResult: AIResult = { keywords: [], labels: [], todos: [], priority: 'normal', summary: '' };
   @State aiError: string = '';
+  @StorageLink('themeBg') themeBg: string = '#F9F8F4';
 
   private richController: RichEditorController = new RichEditorController();
   private plainContent: string = '';
@@ -952,6 +1310,17 @@ struct NoteEdit {
         .layoutWeight(1)
         .padding({ top: 8, bottom: 8 })
         .onClick(() => this.validateAndSave());
+
+        Column({ space: 4 }) {
+          Text('🤖')
+            .fontSize(20);
+          Text('AI')
+            .fontSize(10)
+            .fontColor('#A89982');
+        }
+        .layoutWeight(1)
+        .padding({ top: 8, bottom: 8 })
+        .onClick(() => this.openAIDialog());
       }
       .width('100%')
       .backgroundColor('#FFFFFF')
@@ -959,7 +1328,7 @@ struct NoteEdit {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#F9F8F4');
+    .backgroundColor(this.themeBg);
   }
 
   @Builder

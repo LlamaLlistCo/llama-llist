@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.database import Base
@@ -47,3 +47,15 @@ class Setting(Base):
     id = Column(Integer, primary_key=True, index=True)
     key = Column(String(100), unique=True, index=True, nullable=False)
     value = Column(Text, nullable=True)
+
+
+class Theme(Base):
+    __tablename__ = "themes"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(50), unique=True, index=True)
+    primary_color = Column(String(7), nullable=False)       # 主色
+    secondary_color = Column(String(7), nullable=False)     # 副色
+    background_color = Column(String(7), nullable=False)    # 背景色
+    accent_color = Column(String(7), nullable=False)        # 强调色
+    text_color = Column(String(7), nullable=False)          # 文字色
+    is_dark = Column(Boolean, default=False)

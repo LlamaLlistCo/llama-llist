@@ -165,6 +165,9 @@ llama-llist/
 
 <img src="assets/image-5.png" alt="alt text" width="30%" /><img src="assets/image-6.png" alt="alt text" width="30%" /><img src="assets/image-8.png" alt="alt text" width="30%" />
 
+AI建议功能：
+
+<img src="assets/image-14.png" alt="alt text" width="30%" />
 
 
 ### 3. Llama Peak   山峰---任务区
@@ -190,7 +193,7 @@ llama-llist/
 主题装扮【待实现】
 设置中心【待实现】
 
-<img src="assets/image-13.png" alt="alt text" width="30%" />
+<img src="assets/image-13.png" alt="alt text" width="30%" /><img src="assets/image-15.png" alt="alt text" width="30%" />
 
 
 ## 六、API 接口概览

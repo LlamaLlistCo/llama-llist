@@ -15,6 +15,7 @@ struct SearchPage {
   @State results: Note[] = [];
   @State isLoading: boolean = false;
   @State hasSearched: boolean = false;
+  @StorageLink('themeBg') themeBg: string = '#F9F8F4';
 
   aboutToAppear() {
     this.fetchTags();
@@ -350,7 +351,7 @@ struct SearchPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#F9F8F4')
+    .backgroundColor(this.themeBg)
   }
 
   async fetchTags() {
