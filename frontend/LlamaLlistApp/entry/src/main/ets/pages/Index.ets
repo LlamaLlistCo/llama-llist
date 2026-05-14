@@ -352,6 +352,42 @@ struct Index {
     return map[p] || '#EFEBE9';
   }
 
+
+
+  private countAIProcessedNotes(): number {
+    return this.notes.filter((note: Note) => note.summary && note.summary.trim() !== '').length;
+  }
+
+  private countPendingTodos(): number {
+    return this.todos.filter((todo: Todo) => todo.status === 'pending').length;
+  }
+
+  private countCompletedTodos(): number {
+    return this.todos.filter((todo: Todo) => todo.status === 'completed').length;
+  }
+
+  private countDelayedTodos(): number {
+    return this.todos.filter((todo: Todo) => todo.status === 'delayed').length;
+  }
+
+  private countTodayDueTodos(): number {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const end = start + 24 * 60 * 60 * 1000;
+    return this.todos.filter((todo: Todo) => {
+      if (!todo.deadline || todo.status === 'completed') return false;
+      const t = new Date(todo.deadline).getTime();
+      return t >= start && t < end;
+    }).length;
+  }
+
+  private safeSummary(note: Note): string {
+    if (note.summary && note.summary.trim() !== '') {
+      return note.summary.trim();
+    }
+    return '';
+  }
+
   build(): void {
     Column() {
       Tabs({ barPosition: BarPosition.End, controller: this.controller }) {
@@ -428,6 +464,8 @@ struct Index {
       Column() {
         this.MeadowHeader()
 
+        this.HomeInsightPanel()
+
         Scroll() {
           Row({ space: 12 }) {
             Text('全部')
@@ -466,7 +504,7 @@ struct Index {
         }
         .scrollable(ScrollDirection.Horizontal)
         .scrollBar(BarState.Off)
-        .margin({ top: 10, bottom: 10 })
+        .margin({ top: 10, bottom: 8 })
 
         if (this.notes.length === 0) {
           this.EmptyState()
@@ -511,6 +549,89 @@ struct Index {
     .width('100%')
     .height('100%')
     .backgroundColor(this.themeBg)
+  }
+
+
+  @Builder
+  HomeInsightPanel(): void {
+    Column({ space: 12 }) {
+      Row() {
+        Column({ space: 4 }) {
+          Text('今日概览')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#4A3933')
+
+          Text('笔记、待办和 AI 整理状态一眼可见')
+            .fontSize(12)
+            .fontColor('#A89982')
+        }
+        .alignItems(HorizontalAlign.Start)
+
+        Blank()
+
+        // Text('AI 闭环')
+        //   .fontSize(11)
+        //   .fontColor('#6F5647')
+        //   .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+        //   .backgroundColor('#F3EBDD')
+        //   .borderRadius(14)
+      }
+      .width('100%')
+
+      Row({ space: 10 }) {
+        this.InsightItem('笔记', this.notes.length.toString(), '#F7EFE6')
+        this.InsightItem('AI 摘要', this.countAIProcessedNotes().toString(), '#EEF4EA')
+        this.InsightItem('待处理', this.countPendingTodos().toString(), '#F4EFE8')
+        this.InsightItem('今日到期', this.countTodayDueTodos().toString(), '#FFF4E6')
+      }
+      .width('100%')
+
+      if (this.countAIProcessedNotes() === 0 && this.notes.length > 0) {
+        Row({ space: 8 }) {
+          Text('提示')
+            .fontSize(11)
+            .fontColor('#FFFFFF')
+            .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+            .backgroundColor('#8BA078')
+            .borderRadius(10)
+
+          Text('进入任意笔记点击 AI 整理，摘要会回写并显示在首页卡片中。')
+            .fontSize(12)
+            .fontColor('#8E7D6B')
+            .layoutWeight(1)
+        }
+        .width('100%')
+        .padding({ left: 12, right: 12, top: 9, bottom: 9 })
+        .backgroundColor('#FBF8F3')
+        .borderRadius(12)
+      }
+    }
+    .width('95%')
+    .padding(16)
+    .margin({ left: 20, right: 20, bottom: 12 })
+    .backgroundColor('#FFFFFF')
+    .borderRadius(22)
+    .shadow({ radius: 12, color: '#0A4A3933', offsetY: 4 })
+  }
+
+  @Builder
+  InsightItem(label: string, value: string, bg: string): void {
+    Column({ space: 4 }) {
+      Text(value)
+        .fontSize(19)
+        .fontWeight(FontWeight.Bold)
+        .fontColor('#4A3933')
+
+      Text(label)
+        .fontSize(11)
+        .fontColor('#8E7D6B')
+        .maxLines(1)
+    }
+    .layoutWeight(1)
+    .padding({ top: 11, bottom: 11 })
+    .backgroundColor(bg)
+    .borderRadius(16)
   }
 
   @Builder
@@ -865,50 +986,102 @@ struct Index {
   }
 
   @Builder NoteCard(note: Note): void {
-    Column({ space: 8 }) {
-      Text(note.title)
-        .fontSize(18)
-        .fontWeight(FontWeight.Bold)
-        .fontColor('#4A3933')
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-      if (note.summary && note.summary.trim() !== '') {
-        Text(note.summary)
-          .fontSize(14)
-          .fontColor('#887A73')
-          .maxLines(2)
-          .lineHeight(20)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .margin({ top: 4, bottom: 4 })
-      }
-
+    Column({ space: 12 }) {
       Row() {
-        Text(new Date(note.created_at).toLocaleDateString())
-          .fontSize(11)
-          .fontColor('#D2C4B0')
+        Column({ space: 5 }) {
+          Text(note.title)
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#4A3933')
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-        Blank()
+          Row({ space: 8 }) {
+            Text(new Date(note.updated_at ?? note.created_at).toLocaleDateString())
+              .fontSize(11)
+              .fontColor('#B8A996')
 
-        if (note.tag_id && this.tagNameById(note.tag_id)) {
-          Row() {
-            Circle({ width: 4, height: 4 }).fill('#705C53').margin({ right: 6 })
-            Text(this.tagNameById(note.tag_id))
-              .fontSize(10)
-              .fontColor('#705C53')
+            if (note.tag_id && this.tagNameById(note.tag_id)) {
+              Text(this.tagNameById(note.tag_id))
+                .fontSize(11)
+                .fontColor('#705C53')
+                .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+                .backgroundColor('#EFEBE9')
+                .borderRadius(10)
+            }
           }
-          .padding({ left: 10, right: 10, top: 4, bottom: 4 })
-          .backgroundColor('#EFEBE9')
-          .borderRadius(12)
+        }
+        .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+
+        if (this.safeSummary(note) !== '') {
+          Text('AI 摘要')
+            .fontSize(11)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#5F7652')
+            .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+            .backgroundColor('#EEF4EA')
+            .borderRadius(13)
+        } else {
+          Text('未整理')
+            .fontSize(11)
+            .fontColor('#A89982')
+            .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+            .backgroundColor('#F6F1EA')
+            .borderRadius(13)
         }
       }
       .width('100%')
-      .margin({ top: 4 })
+
+      if (this.safeSummary(note) !== '') {
+        Column({ space: 6 }) {
+          Text(this.safeSummary(note))
+            .fontSize(14)
+            .fontColor('#6F6254')
+            .lineHeight(21)
+            .maxLines(3)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .width('100%')
+        .padding({ left: 14, right: 14, top: 12, bottom: 12 })
+        .backgroundColor('#FBF8F3')
+        .borderRadius(14)
+      } else if (note.content && note.content.trim() !== '') {
+        Text(note.content.trim())
+          .fontSize(14)
+          .fontColor('#9A8B7A')
+          .lineHeight(20)
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      } else {
+        Text('暂无正文，进入笔记补充内容后可使用 AI 整理。')
+          .fontSize(13)
+          .fontColor('#B8A996')
+      }
+
+      Row({ space: 8 }) {
+        Row({ space: 5 }) {
+          Circle({ width: 5, height: 5 }).fill(this.safeSummary(note) !== '' ? '#8BA078' : '#D2C4B0')
+          Text(this.safeSummary(note) !== '' ? '已形成 AI 摘要' : '等待 AI 整理')
+            .fontSize(11)
+            .fontColor(this.safeSummary(note) !== '' ? '#6F8062' : '#A89982')
+        }
+
+        Blank()
+
+        Text('查看')
+          .fontSize(12)
+          .fontColor('#705C53')
+          .padding({ left: 11, right: 11, top: 5, bottom: 5 })
+          .backgroundColor('#EFEBE9')
+          .borderRadius(12)
+      }
+      .width('100%')
     }
-    .padding(20)
+    .padding(18)
     .backgroundColor('#FFFFFF')
-    .borderRadius(20)
-    .shadow({ radius: 15, color: '#0D4A3933', offsetY: 6 })
+    .borderRadius(22)
+    .shadow({ radius: 14, color: '#0D4A3933', offsetY: 5 })
   }
 
   @Builder EmptyState(): void {

@@ -313,95 +313,169 @@ struct UrlInputDialog {
 @CustomDialog
 struct AIDialog {
   controller: CustomDialogController = new CustomDialogController({ builder: () => {} });
-  noteId: number = 0;  // 从外部传入
-  onApplySummary: (summary: string) => void = () => {};  // 应用摘要回调
-  onApplyTodos: (todos: string[]) => void = () => {};    // 应用待办回调
+  noteId: number = 0;
+  onApplySummary: (summary: string) => void = () => {};
+  onApplyTodos: (todos: string[]) => void = () => {};
 
   @State isLoading: boolean = true;
+  @State localAIStatus: string = 'idle';
+  @State cloudAIStatus: string = 'idle';
   @State aiResult: AIResult = { keywords: [], labels: [], todos: [], priority: 'normal', summary: '' };
   @State aiError: string = '';
-  @State selectedKeywords: Set<number> = new Set();
-  @State selectedTodos: Set<number> = new Set();
+  @State cloudNotice: string = '';
   @StorageLink('themeBg') themeBg: string = '#F9F8F4';
 
   async aboutToAppear(): Promise<void> {
     await this.fetchData();
   }
 
+  normalizeList(list: string[]): string[] {
+    const result: string[] = [];
+    for (let i = 0; i < list.length; i++) {
+      const item = (list[i] || '').trim();
+      if (item.length > 0 && result.indexOf(item) < 0) {
+        result.push(item);
+      }
+    }
+    return result;
+  }
+
+  normalizeSummary(summary: string): string {
+    const text = (summary || '').trim();
+    if (text.length > 300) {
+      this.cloudNotice = '云端摘要较长，已自动截断到 300 字，可继续手动编辑。';
+      return text.substring(0, 300);
+    }
+    return text;
+  }
+
+  statusText(status: string): string {
+    if (status === 'loading') return '生成中';
+    if (status === 'success') return '已完成';
+    if (status === 'empty') return '无结果';
+    if (status === 'timeout') return '超时';
+    if (status === 'failed') return '异常';
+    return '等待中';
+  }
+
+  priorityText(priority: string): string {
+    if (priority === 'high' || priority === 'important_urgent') return '高优先级';
+    if (priority === 'medium' || priority === 'important_not_urgent') return '中优先级';
+    if (priority === 'low') return '低优先级';
+    return '普通优先级';
+  }
+
   async fetchData(): Promise<void> {
     this.isLoading = true;
-    this.selectedKeywords.clear();
-    this.selectedTodos.clear();
+    this.aiError = '';
+    this.cloudNotice = '';
+    this.localAIStatus = 'loading';
+    this.cloudAIStatus = 'idle';
+
     try {
-      // 1. 本地抽取
       const extractRes = await httpRequest<AIExtractResponse>(`/notes/${this.noteId}/ai/extract`, 'POST');
       if (extractRes && extractRes.result) {
+        const keywords = this.normalizeList(extractRes.result.keywords || []);
+        const labels = this.normalizeList(extractRes.result.labels || []);
+        const todos = this.normalizeList(extractRes.result.todos || []).slice(0, 8);
         this.aiResult = {
-          keywords: extractRes.result.keywords || [],
-          labels: extractRes.result.labels || [],
-          todos: extractRes.result.todos || [],
+          keywords: keywords,
+          labels: labels,
+          todos: todos,
           priority: extractRes.result.priority || 'normal',
-          summary: extractRes.result.summary || ''
+          summary: this.aiResult.summary || ''
         };
-      }
-
-      // 2. 云端摘要（可选，失败不影响）
-      try {
-        const cloudRes = await httpRequest<AISummarizeResponse>(`/notes/${this.noteId}/ai/summarize`, 'POST');
-        if (cloudRes && cloudRes.summary) {
-          this.aiResult.summary = cloudRes.summary;
-          if (cloudRes.keywords && cloudRes.keywords.length) {
-            this.aiResult.keywords = cloudRes.keywords;
-          }
-        }
-      } catch (e) {
-        const error = e as Error;
-        console.warn('cloud summarize failed', error.message);
-        this.aiError = '💡 提示: 云端摘要不可用，已使用本地抽取';
+        this.localAIStatus = (keywords.length + labels.length + todos.length) > 0 ? 'success' : 'empty';
+      } else {
+        this.localAIStatus = 'empty';
       }
     } catch (e) {
       const error = e as Error;
-      console.error('AI 抽取失败', error.message);
-      this.aiError = '❌ AI 抽取失败，请稍后重试';
-    } finally {
-      this.isLoading = false;
+      this.localAIStatus = 'failed';
+      this.aiError = '端侧整理失败，请检查模型或本地服务状态。' + (error.message ? ` ${error.message}` : '');
     }
+
+    this.cloudAIStatus = 'loading';
+    try {
+      const cloudRes = await httpRequest<AISummarizeResponse>(`/notes/${this.noteId}/ai/summarize`, 'POST');
+      if (cloudRes && cloudRes.summary && cloudRes.summary.trim().length > 0) {
+        this.aiResult.summary = this.normalizeSummary(cloudRes.summary);
+        if (cloudRes.keywords && cloudRes.keywords.length > 0) {
+          this.aiResult.keywords = this.normalizeList(cloudRes.keywords).slice(0, 8);
+        }
+        this.cloudAIStatus = 'success';
+      } else {
+        this.cloudAIStatus = 'empty';
+        this.cloudNotice = '云端模型返回为空，可手动填写摘要，或稍后重新生成。';
+      }
+    } catch (e) {
+      const error = e as Error;
+      const msg = error.message || '';
+      this.cloudAIStatus = msg.indexOf('timeout') >= 0 || msg.indexOf('Timeout') >= 0 || msg.indexOf('timed out') >= 0 ? 'timeout' : 'failed';
+      this.cloudNotice = this.cloudAIStatus === 'timeout'
+        ? '云端总结超时，端侧关键词和待办仍可使用。'
+        : '云端总结不可用，已降级为端侧整理结果。';
+    }
+
+    this.isLoading = false;
   }
 
   async regenerate(): Promise<void> {
-    this.isLoading = true;
-    try {
-      const res = await httpRequest<AIExtractResponse>(`/notes/${this.noteId}/ai/regenerate`, 'POST');
-      if (res && res.result) {
-        this.aiResult = {
-          keywords: res.result.keywords || [],
-          labels: res.result.labels || [],
-          todos: res.result.todos || [],
-          priority: res.result.priority || 'normal',
-          summary: this.aiResult.summary
-        };
-        this.aiError = '';
-      }
-    } catch (e) {
-      const error = e as Error;
-      promptAction.showToast({ message: '重新生成失败: ' + error.message });
-    } finally {
-      this.isLoading = false;
+    await this.fetchData();
+  }
+
+  applySummary(): void {
+    const summary = this.aiResult.summary.trim();
+    if (!summary) {
+      promptAction.showToast({ message: '摘要为空，不能应用' });
+      return;
     }
+    this.onApplySummary(summary);
+    this.controller.close();
+  }
+
+  applyTodos(): void {
+    const todos = this.normalizeList(this.aiResult.todos).filter((t: string) => t.trim().length > 0);
+    if (todos.length === 0) {
+      promptAction.showToast({ message: '暂无可创建的待办' });
+      return;
+    }
+    this.onApplyTodos(todos);
+    this.controller.close();
+  }
+
+  @Builder
+  StatusBadge(text: string, bg: string, color: string): void {
+    Text(text)
+      .fontSize(11)
+      .fontColor(color)
+      .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+      .backgroundColor(bg)
+      .borderRadius(10);
+  }
+
+  @Builder
+  EmptyHint(text: string): void {
+    Text(text)
+      .fontSize(13)
+      .fontColor('#A89982')
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 12, bottom: 12 })
+      .backgroundColor('#FBF8F3')
+      .borderRadius(12);
   }
 
   build(): void {
     Column() {
       Row() {
         Column({ space: 5 }) {
-          Text('AI 建议')
+          Text('AI 智能整理')
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
-            .fontColor('#3F332D')
-
-          Text('根据当前笔记生成摘要、关键词和待办')
+            .fontColor('#3F332D');
+          Text('端侧即时抽取，云端深度总结，结果可编辑后写回')
             .fontSize(13)
-            .fontColor('#9A8B7A')
+            .fontColor('#9A8B7A');
         }
         .alignItems(HorizontalAlign.Start)
 
@@ -415,194 +489,267 @@ struct AIDialog {
           .textAlign(TextAlign.Center)
           .backgroundColor('#F4EFE8')
           .borderRadius(17)
-          .onClick(() => this.controller.close())
+          .onClick(() => this.controller.close());
       }
       .width('100%')
-      .padding({ left: 24, right: 20, top: 22, bottom: 14 })
+      .padding({ left: 24, right: 20, top: 22, bottom: 14 });
 
       if (this.isLoading) {
         Column({ space: 14 }) {
           LoadingProgress()
             .width(38)
             .height(38)
-            .color('#9B7250')
-
-          Text('AI 正在分析笔记内容...')
+            .color('#9B7250');
+          Text('正在整理笔记内容...')
             .fontSize(15)
-            .fontColor('#8E7D6B')
+            .fontColor('#8E7D6B');
+          Text('端侧结果会优先返回，云端失败时不影响基础整理')
+            .fontSize(12)
+            .fontColor('#A89982');
         }
         .width('100%')
-        .height(260)
-        .justifyContent(FlexAlign.Center)
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center);
       } else {
         Scroll() {
-          Column({ space: 18 }) {
+          Column({ space: 16 }) {
             if (this.aiError) {
               Text(this.aiError)
-                .fontSize(14)
+                .fontSize(13)
                 .fontColor('#B7791F')
                 .width('100%')
                 .padding({ left: 14, right: 14, top: 10, bottom: 10 })
                 .backgroundColor('#FFF8E8')
-                .borderRadius(12)
+                .borderRadius(12);
             }
 
-            Column({ space: 10 }) {
+            Column({ space: 14 }) {
               Row() {
-                Text('摘要')
-                  .fontSize(16)
-                  .fontWeight(FontWeight.Medium)
-                  .fontColor('#4A3933')
-
+                Column({ space: 3 }) {
+                  Text('笔记整理')
+                    .fontSize(17)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor('#4A3933');
+                  Text('本地完成关键词、标签、待办和优先级抽取')
+                    .fontSize(12)
+                    .fontColor('#A89982');
+                }
+                .alignItems(HorizontalAlign.Start)
                 Blank()
-
-                Text(`${this.aiResult.summary.length}/300`)
-                  .fontSize(12)
-                  .fontColor('#A89982')
+                this.StatusBadge(`${this.statusText(this.localAIStatus)}`, '#EEF5EA', '#5A7D45')
               }
               .width('100%')
 
-              TextArea({ text: this.aiResult.summary, placeholder: '暂无摘要...' })
+              Row({ space: 8 }) {
+                this.StatusBadge(this.priorityText(this.aiResult.priority), '#F3EBDD', '#8A5A32')
+                this.StatusBadge(`关键词 ${this.aiResult.keywords.length}`, '#F0EDF8', '#6B5A9E')
+                this.StatusBadge(`待办 ${this.aiResult.todos.length}`, '#EEF5EA', '#5A7D45')
+              }
+              .width('100%')
+
+              Column({ space: 10 }) {
+                Text('关键词')
+                  .fontSize(14)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor('#4A3933')
+                  .width('100%');
+
+                if (this.aiResult.keywords.length === 0) {
+                  this.EmptyHint('未识别到关键词，可继续编辑正文后重新生成。')
+                } else {
+                  Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap }) {
+                    ForEach(this.aiResult.keywords, (kw: string, idx: number) => {
+                      Row({ space: 6 }) {
+                        Text(kw)
+                          .fontSize(14)
+                          .fontColor('#6B5A42');
+                        Text('×')
+                          .fontSize(14)
+                          .fontColor('#B8A996')
+                          .onClick(() => {
+                            this.aiResult.keywords = this.aiResult.keywords.filter((_: string, i: number) => i !== idx);
+                          });
+                      }
+                      .padding({ left: 12, right: 10, top: 7, bottom: 7 })
+                      .margin({ right: 8, bottom: 8 })
+                      .backgroundColor('#F3EBDD')
+                      .borderRadius(18);
+                    }, (kw: string, i: number) => 'kw-' + i)
+                  }
+                  .width('100%')
+                }
+              }
+              .width('100%')
+
+              Column({ space: 10 }) {
+                Text('建议标签')
+                  .fontSize(14)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor('#4A3933')
+                  .width('100%');
+
+                if (this.aiResult.labels.length === 0) {
+                  this.EmptyHint('暂无标签建议。')
+                } else {
+                  Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap }) {
+                    ForEach(this.aiResult.labels, (label: string, idx: number) => {
+                      Row({ space: 6 }) {
+                        Text(label)
+                          .fontSize(14)
+                          .fontColor('#5A6F43');
+                        Text('×')
+                          .fontSize(14)
+                          .fontColor('#A8B998')
+                          .onClick(() => {
+                            this.aiResult.labels = this.aiResult.labels.filter((_: string, i: number) => i !== idx);
+                          });
+                      }
+                      .padding({ left: 12, right: 10, top: 7, bottom: 7 })
+                      .margin({ right: 8, bottom: 8 })
+                      .backgroundColor('#EEF5EA')
+                      .borderRadius(18);
+                    }, (label: string, i: number) => 'label-' + i)
+                  }
+                  .width('100%')
+                }
+              }
+              .width('100%')
+
+              Column({ space: 10 }) {
+                Text('识别待办')
+                  .fontSize(14)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor('#4A3933')
+                  .width('100%');
+
+                if (this.aiResult.todos.length === 0) {
+                  this.EmptyHint('未识别到明确待办，可手动添加。')
+                }
+
+                Column({ space: 9 }) {
+                  ForEach(this.aiResult.todos, (todo: string, idx: number) => {
+                    Row({ space: 10 }) {
+                      Column()
+                        .width(8)
+                        .height(8)
+                        .borderRadius(4)
+                        .backgroundColor('#8BA078')
+                        .flexShrink(0);
+
+                      TextInput({ text: todo })
+                        .fontSize(14)
+                        .fontColor('#4A3933')
+                        .backgroundColor(Color.Transparent)
+                        .layoutWeight(1)
+                        .onChange((v: string) => {
+                          const newTodos = [...this.aiResult.todos];
+                          newTodos[idx] = v;
+                          this.aiResult.todos = newTodos;
+                        });
+
+                      Text('×')
+                        .fontSize(16)
+                        .fontColor('#B8A996')
+                        .onClick(() => {
+                          this.aiResult.todos = this.aiResult.todos.filter((_: string, i: number) => i !== idx);
+                        });
+                    }
+                    .width('100%')
+                    .padding({ left: 14, right: 12, top: 10, bottom: 10 })
+                    .backgroundColor('#FBF8F3')
+                    .borderRadius(13);
+                  }, (todo: string, i: number) => 'todo-' + i)
+
+                  Row({ space: 6 }) {
+                    Text('+')
+                      .fontSize(18)
+                      .fontColor('#9B7250');
+                    Text('添加待办')
+                      .fontSize(14)
+                      .fontColor('#9B7250');
+                  }
+                  .width('100%')
+                  .padding({ top: 10, bottom: 10 })
+                  .justifyContent(FlexAlign.Center)
+                  .border({ width: 1, color: '#E8DCCA', style: BorderStyle.Dashed })
+                  .borderRadius(13)
+                  .onClick(() => {
+                    this.aiResult.todos = [...this.aiResult.todos, ''];
+                  });
+                }
+                .width('100%')
+              }
+              .width('100%')
+            }
+            .padding(16)
+            .backgroundColor('#FFFFFF')
+            .borderRadius(18)
+            .shadow({ radius: 10, color: '#12000000', offsetY: 3 });
+
+            Column({ space: 12 }) {
+              Row() {
+                Column({ space: 3 }) {
+                  Text('笔记总结')
+                    .fontSize(17)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor('#4A3933');
+                  Text('上传标题和正文生成摘要，适合长文本理解')
+                    .fontSize(12)
+                    .fontColor('#A89982');
+                }
+                .alignItems(HorizontalAlign.Start)
+                Blank()
+                this.StatusBadge(`${this.statusText(this.cloudAIStatus)}`, '#F0EDF8', '#6B5A9E')
+              }
+              .width('100%')
+
+              if (this.cloudNotice) {
+                Text(this.cloudNotice)
+                  .fontSize(13)
+                  .fontColor('#9A6A2F')
+                  .width('100%')
+                  .padding({ left: 12, right: 12, top: 9, bottom: 9 })
+                  .backgroundColor('#FFF8E8')
+                  .borderRadius(12);
+              }
+
+              Row() {
+                Text('摘要')
+                  .fontSize(14)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor('#4A3933');
+                Blank()
+                Text(`${this.aiResult.summary.length}/300`)
+                  .fontSize(12)
+                  .fontColor('#A89982');
+              }
+              .width('100%')
+
+              TextArea({ text: this.aiResult.summary, placeholder: '云端摘要为空时，可在这里手动填写...' })
                 .fontSize(15)
                 .fontColor('#4A3933')
                 .backgroundColor('#FBF8F3')
                 .borderRadius(14)
                 .border({ width: 1, color: '#EEE3D6' })
                 .padding(14)
-                .height(118)
+                .height(122)
                 .maxLength(300)
                 .showCounter(false)
                 .onChange((v: string) => {
                   this.aiResult.summary = v;
-                })
+                });
             }
             .padding(16)
             .backgroundColor('#FFFFFF')
             .borderRadius(18)
-            .shadow({ radius: 10, color: '#12000000', offsetY: 3 })
-
-            Column({ space: 12 }) {
-              Row() {
-                Text('关键词')
-                  .fontSize(16)
-                  .fontWeight(FontWeight.Medium)
-                  .fontColor('#4A3933')
-
-                Blank()
-
-                Text(`${this.aiResult.keywords.length} 个`)
-                  .fontSize(12)
-                  .fontColor('#A89982')
-              }
-              .width('100%')
-
-              Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap }) {
-                ForEach(this.aiResult.keywords, (kw: string, idx: number) => {
-                  Row({ space: 6 }) {
-                    Text(kw)
-                      .fontSize(14)
-                      .fontColor('#6B5A42')
-
-                    SymbolGlyph($r('sys.symbol.xmark_circle_fill'))
-                      .fontSize(15)
-                      .fontColor(['#CBBBA5'])
-                      .onClick(() => {
-                        this.aiResult.keywords = this.aiResult.keywords.filter((_, i) => i !== idx);
-                      })
-                  }
-                  .padding({ left: 12, right: 10, top: 7, bottom: 7 })
-                  .margin({ right: 8, bottom: 8 })
-                  .backgroundColor('#F3EBDD')
-                  .borderRadius(18)
-                }, (kw: string, i: number) => 'kw-' + i)
-              }
-              .width('100%')
-            }
-            .padding(16)
-            .backgroundColor('#FFFFFF')
-            .borderRadius(18)
-            .shadow({ radius: 10, color: '#12000000', offsetY: 3 })
-
-            Column({ space: 12 }) {
-              Row() {
-                Text('待办事项')
-                  .fontSize(16)
-                  .fontWeight(FontWeight.Medium)
-                  .fontColor('#4A3933')
-
-                Blank()
-
-                Text(`${this.aiResult.todos.length} 项`)
-                  .fontSize(12)
-                  .fontColor('#A89982')
-              }
-              .width('100%')
-
-              Column({ space: 10 }) {
-                ForEach(this.aiResult.todos, (t: string, idx: number) => {
-                  Row({ space: 10 }) {
-                    Column()
-                      .width(8)
-                      .height(8)
-                      .borderRadius(4)
-                      .backgroundColor('#8BA078')
-                      .flexShrink(0)
-
-                    TextInput({ text: t })
-                      .fontSize(14)
-                      .fontColor('#4A3933')
-                      .backgroundColor(Color.Transparent)
-                      .layoutWeight(1)
-                      .onChange((v: string) => {
-                        const newTodos = [...this.aiResult.todos];
-                        newTodos[idx] = v;
-                        this.aiResult.todos = newTodos;
-                      })
-
-                    Text('✕')
-                      .fontSize(15)
-                      .fontColor('#B8A996')
-                      .onClick(() => {
-                        this.aiResult.todos = this.aiResult.todos.filter((_, i) => i !== idx);
-                      })
-                  }
-                  .width('100%')
-                  .padding({ left: 14, right: 12, top: 10, bottom: 10 })
-                  .backgroundColor('#FBF8F3')
-                  .borderRadius(13)
-                }, (t: string, i: number) => 'todo-' + i)
-
-                Row({ space: 6 }) {
-                  Text('+')
-                    .fontSize(18)
-                    .fontColor('#9B7250')
-
-                  Text('添加待办')
-                    .fontSize(14)
-                    .fontColor('#9B7250')
-                }
-                .width('100%')
-                .padding({ top: 10, bottom: 10 })
-                .justifyContent(FlexAlign.Center)
-                .border({ width: 1, color: '#E8DCCA', style: BorderStyle.Dashed })
-                .borderRadius(13)
-                .onClick(() => {
-                  this.aiResult.todos = [...this.aiResult.todos, ''];
-                })
-              }
-              .width('100%')
-            }
-            .padding(16)
-            .backgroundColor('#FFFFFF')
-            .borderRadius(18)
-            .shadow({ radius: 10, color: '#12000000', offsetY: 3 })
+            .shadow({ radius: 10, color: '#12000000', offsetY: 3 });
           }
           .width('100%')
-          .padding({ left: 20, right: 20, top: 6, bottom: 10 })
+          .padding({ left: 20, right: 20, top: 6, bottom: 10 });
         }
         .scrollable(ScrollDirection.Vertical)
         .scrollBar(BarState.Off)
-        .layoutWeight(1)
+        .layoutWeight(1);
 
         Row({ space: 10 }) {
           Button('重新生成')
@@ -613,7 +760,7 @@ struct AIDialog {
             .borderRadius(14)
             .height(42)
             .layoutWeight(1)
-            .onClick(() => this.regenerate())
+            .onClick(() => this.regenerate());
 
           Button('应用摘要')
             .fontSize(14)
@@ -623,12 +770,9 @@ struct AIDialog {
             .borderRadius(14)
             .height(42)
             .layoutWeight(1)
-            .onClick(() => {
-              this.onApplySummary(this.aiResult.summary);
-              this.controller.close();
-            })
+            .onClick(() => this.applySummary());
 
-          Button('作为待办')
+          Button('创建待办')
             .fontSize(14)
             .fontWeight(FontWeight.Medium)
             .fontColor('#FFFFFF')
@@ -636,218 +780,18 @@ struct AIDialog {
             .borderRadius(14)
             .height(42)
             .layoutWeight(1)
-            .onClick(() => {
-              this.onApplyTodos(this.aiResult.todos.filter(t => t.trim() !== ''));
-              this.controller.close();
-            })
+            .onClick(() => this.applyTodos());
         }
         .width('100%')
-        .padding({ left: 20, right: 20, top: 12, bottom: 20 })
+        .padding({ left: 20, right: 20, top: 12, bottom: 20 });
       }
     }
     .width('92%')
     .height('76%')
     .backgroundColor(this.themeBg)
     .borderRadius(24)
-    .clip(true)
+    .clip(true);
   }
-  // build(): void {
-  //   Column({ space: 12 }) {
-  //     // 标题栏
-  //     Row() {
-  //       Text('🤖 AI 建议')
-  //         .fontSize(18)
-  //         .fontWeight(FontWeight.Bold)
-  //         .fontColor('#4A3933');
-  //       Blank();
-  //       SymbolGlyph($r('sys.symbol.xmark'))
-  //         .fontSize(20)
-  //         .fontColor(['#A89982'])
-  //         .onClick(() => this.controller.close());
-  //     }
-  //     .width('100%')
-  //     .padding({ left: 12, right: 12, top: 12, bottom: 12 });
-  //
-  //     Divider().color('#EFEBE9');
-  //
-  //     if (this.isLoading) {
-  //       Column({ space: 10 }) {
-  //         LoadingProgress().width(40).height(40).color('#705C53');
-  //         Text('AI 正在思考...').fontSize(14).fontColor('#A89982');
-  //       }
-  //       .padding(40)
-  //       .width('100%')
-  //       .justifyContent(FlexAlign.Center)
-  //     } else {
-  //       Scroll() {
-  //         Column({ space: 16 }) {
-  //           // 摘要区域
-  //           Column({ space: 8 }) {
-  //             Row({ space: 6 }) {
-  //               Text('📝 摘要').fontSize(14).fontColor('#4A3933').fontWeight(FontWeight.Medium);
-  //               Text(`(${this.aiResult.summary.length}/300)`).fontSize(11).fontColor('#A89982');
-  //             }
-  //             TextArea({ text: this.aiResult.summary, placeholder: '摘要内容...' })
-  //               .fontSize(13)
-  //               .fontColor('#4A3933')
-  //               .backgroundColor('#F9F8F4')
-  //               .borderRadius(8)
-  //               .padding(10)
-  //               .height(100)
-  //               .maxLength(300)
-  //               .showCounter(false)
-  //               .onChange((v: string) => { this.aiResult.summary = v; });
-  //           }
-  //
-  //           if (this.aiError) {
-  //             Row() {
-  //               Text(this.aiError).fontSize(12).fontColor('#E67E22')
-  //                 .layoutWeight(1);
-  //             }
-  //             .padding(10)
-  //             .backgroundColor('#FFF3E0')
-  //             .borderRadius(6)
-  //             .width('100%');
-  //           }
-  //
-  //           // 关键词标签区域
-  //           Column({ space: 8 }) {
-  //             Row({ space: 6 }) {
-  //               Text('🏷️ 关键词').fontSize(14).fontColor('#4A3933').fontWeight(FontWeight.Medium);
-  //               Text(`(${this.aiResult.keywords.length})`).fontSize(11).fontColor('#A89982');
-  //             }
-  //
-  //             Flex({ wrap: FlexWrap.Wrap }) {
-  //               ForEach(this.aiResult.keywords, (kw: string, idx: number) => {
-  //                 Row({ space: 4 }) {
-  //                   Text(kw)
-  //                     .fontSize(12)
-  //                     .fontColor('#705C53')
-  //                     .maxLines(1)
-  //                     .textOverflow({ overflow: TextOverflow.Ellipsis });
-  //
-  //                   SymbolGlyph($r('sys.symbol.xmark_circle_fill'))
-  //                     .fontSize(14)
-  //                     .fontColor(['#A89982'])
-  //                     .onClick(() => {
-  //                       const newKw = this.aiResult.keywords.filter((_, i) => i !== idx);
-  //                       this.aiResult.keywords = newKw;
-  //                     });
-  //                 }
-  //                 .padding({ left: 10, right: 8, top: 6, bottom: 6 })
-  //                 .margin({ right: 8, bottom: 8 })
-  //                 .backgroundColor('#EFEBE9')
-  //                 .borderRadius(14);
-  //               }, (kw: string, i: number) => 'kw-' + i)
-  //             }
-  //             .width('100%')
-  //           }
-  //
-  //           // 待办项区域
-  //           Column({ space: 8 }) {
-  //             Row({ space: 6 }) {
-  //               Text('✓ 待办').fontSize(14).fontColor('#4A3933').fontWeight(FontWeight.Medium);
-  //               Text(`(${this.aiResult.todos.length})`).fontSize(11).fontColor('#A89982');
-  //             }
-  //
-  //             Column({ space: 6 }) {
-  //               ForEach(this.aiResult.todos, (t: string, idx: number) => {
-  //                 Row({ space: 8 }) {
-  //                   Checkbox()
-  //                     .width(18)
-  //                     .height(18)
-  //                     .selectedColor('#705C53');
-  //                   TextInput({ text: t })
-  //                     .fontSize(13)
-  //                     .fontColor('#4A3933')
-  //                     .backgroundColor(Color.Transparent)
-  //                     .layoutWeight(1)
-  //                     .onChange((v: string) => {
-  //                       const newTodos = [...this.aiResult.todos];
-  //                       newTodos[idx] = v;
-  //                       this.aiResult.todos = newTodos;
-  //                     });
-  //                   SymbolGlyph($r('sys.symbol.trash'))
-  //                     .fontSize(16)
-  //                     .fontColor(['#C0392B'])
-  //                     .onClick(() => {
-  //                       const newTodos = this.aiResult.todos.filter((_, i) => i !== idx);
-  //                       this.aiResult.todos = newTodos;
-  //                     });
-  //                 }
-  //                 .padding({ left: 10, right: 10, top: 8, bottom: 8 })
-  //                 .backgroundColor('#F9F8F4')
-  //                 .borderRadius(6)
-  //                 .width('100%');
-  //               }, (t: string, i: number) => 'todo-' + i)
-  //             }
-  //             .width('100%');
-  //
-  //             // 添加待办按钮
-  //             Row({ space: 8 }) {
-  //               SymbolGlyph($r('sys.symbol.plus_circle'))
-  //                 .fontSize(16)
-  //                 .fontColor(['#705C53']);
-  //               Text('添加待办')
-  //                 .fontSize(13)
-  //                 .fontColor('#705C53');
-  //             }
-  //             .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-  //             .backgroundColor('#EFEBE9')
-  //             .borderRadius(6)
-  //             .width('100%')
-  //             .justifyContent(FlexAlign.Center)
-  //             .onClick(() => {
-  //               this.aiResult.todos = [...this.aiResult.todos, ''];
-  //             });
-  //           }
-  //         }
-  //         .padding({ left: 12, right: 12 })
-  //         .width('100%');
-  //       }
-  //       .scrollable(ScrollDirection.Vertical)
-  //       .scrollBar(BarState.Off)
-  //       .layoutWeight(1);
-  //
-  //       // 底部操作按钮
-  //       Row({ space: 8 }) {
-  //         Button('重新生成')
-  //           .fontSize(13)
-  //           .fontColor('#FFF')
-  //           .backgroundColor('#ffb79898')
-  //           .onClick(() => this.regenerate())
-  //           .layoutWeight(1);
-  //
-  //         Button('应用摘要')
-  //           .fontSize(13)
-  //           .fontColor('#FFF')
-  //           .backgroundColor('#ffa78b61')
-  //           .onClick(() => {
-  //             this.onApplySummary(this.aiResult.summary);
-  //             this.controller.close();
-  //           })
-  //           .layoutWeight(1);
-  //
-  //         Button('作为待办')
-  //           .fontSize(13)
-  //           .fontColor('#FFF')
-  //           .backgroundColor('#ffd6b857')
-  //           .onClick(() => {
-  //             this.onApplyTodos(this.aiResult.todos.filter(t => t.trim() !== ''));
-  //             this.controller.close();
-  //           })
-  //           .layoutWeight(1);
-  //       }
-  //       .padding({ left: 12, right: 12, top: 8, bottom: 8 })
-  //       .width('100%');
-  //     }
-  //   }
-  //   .padding({ left: 16, right: 16, top: 12, bottom: 16 })
-  //   .backgroundColor(Color.White)
-  //   .borderRadius(20)
-  //   .width('90%')
-  //   .height('80%');
-  // }
 }
 
 interface AIResult {
