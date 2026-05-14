@@ -242,8 +242,32 @@ AI建议功能：
 | **图片存储** | `image_paths` 存储逗号分隔路径，建议改为一对多关联表，支持更灵活的图片管理 |
 | **数据库迁移** | 目前使用 `Base.metadata.create_all`，生产环境建议引入 `Alembic` 进行版本化迁移 |
 
-## 注：为第三次作业预留的 AI 扩展点
+## 实现了的AI 扩展点
+### 本地提取功能（端侧模型）
 
-- **数据库层**：`Note` 模型已预留 `embedding` 字段（Text 类型），用于存储向量，便于实现语义搜索。
-- **后端接口**：计划新增 `/ai/summarize`（笔记摘要）、`/ai/classify`（智能标签）、`/ai/priority`（任务优先级推荐）等端点，当前可返回 Mock 数据。
-- **前端**：笔记详情页已预留「AI 助手」按钮位置，点击后调用 AI 接口。
+| 功能 | 实现方式 |
+|------|------|
+| 关键词提取| 词频统计 + 停用词过滤 |
+| 标签生成 | 取前 3 个关键词 |
+| Todo 识别 | 正则表达式匹配 (checkbox, dash, todo 关键词) |
+| 优先级判断 |	关键词匹配（urgent, important, asap 等）|
+
+API端点
+```
+POST /ai/local/extract/{note_id}
+POST /notes/{note_id}/ai/extract
+```
+
+### 云端摘要功能
+API端点
+```
+POST /ai/cloud/summarize/{note_id} 
+POST /notes/{note_id}/ai/summarize
+```
+功能：可在“行囊”模块配置url和apikey
++ 生成摘要
++ 提取关键词
++ 提取标签
++ 提取Todo
+可以应用摘要、标签、Todo等
+重新生成可以再次调用尝试
