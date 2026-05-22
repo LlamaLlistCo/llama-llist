@@ -13,6 +13,8 @@ from app.routers import tags
 from app.routers import todos
 from app.routers import files
 from app.routers import templates
+from app.routers import ai
+from app.routers import settings
 from app import crud
 
 # 初始化 colorama
@@ -79,8 +81,9 @@ async def startup():
     async with AsyncSessionLocal() as db:
         try:
             await crud.init_default_templates(db)
+            await crud.init_default_themes(db)
         except Exception as e:
-            print(f"❌ 初始化模板失败: {e}")
+            print(f"❌ 初始化失败: {e}")
 
     local_ip = get_local_ip()
     print("\n" + "=" * 60)
@@ -95,6 +98,8 @@ app.include_router(tags.router)
 app.include_router(todos.router)
 app.include_router(files.router)
 app.include_router(templates.router)
+app.include_router(ai.router)
+app.include_router(settings.router)
 
 @app.get("/")
 async def root():

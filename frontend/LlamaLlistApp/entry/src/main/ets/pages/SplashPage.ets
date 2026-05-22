@@ -5,6 +5,7 @@ import router from '@ohos.router';
 struct SplashPage {
   @State bgopacity: number = 0;
   @State translateY: number = 40;
+  @StorageLink('themeBg') themeBg: string = '#F9F8F4';
   private timer: number = -1;
 
   build() {
@@ -52,7 +53,7 @@ struct SplashPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#F9F8F4')
+    .backgroundColor(this.themeBg)
     .justifyContent(FlexAlign.SpaceBetween)
     .alignItems(HorizontalAlign.Center)
     .onAppear(() => {

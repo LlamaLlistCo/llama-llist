@@ -75,11 +75,44 @@ class TemplateBase(BaseModel):
     category: str
     content_skeleton: str
     icon: Optional[str] = None
+    description: Optional[str] = None
+    sort_order: int = 0
+    is_system: bool = True
 
 class TemplateCreate(TemplateBase):
     pass
 
 class TemplateOut(TemplateBase):
     id: int
+    class Config:
+        from_attributes = True
+
+
+# 简单的键值配置
+class SettingIn(BaseModel):
+    key: str
+    value: str
+
+class SettingOut(BaseModel):
+    key: str
+    value: str
+
+    class Config:
+        from_attributes = True
+
+
+# 主题相关
+class ThemeBase(BaseModel):
+    name: str
+    primary_color: str
+    secondary_color: str
+    background_color: str
+    accent_color: str
+    text_color: str
+    is_dark: bool = False
+
+class ThemeOut(ThemeBase):
+    id: int
+
     class Config:
         from_attributes = True
