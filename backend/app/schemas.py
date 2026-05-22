@@ -75,6 +75,9 @@ class TemplateBase(BaseModel):
     category: str
     content_skeleton: str
     icon: Optional[str] = None
+    description: Optional[str] = None
+    sort_order: int = 0
+    is_system: bool = True
 
 class TemplateCreate(TemplateBase):
     pass

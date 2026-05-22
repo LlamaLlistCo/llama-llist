@@ -23,6 +23,10 @@ export class ThemeManager {
       AppStorage.setOrCreate('themePrimary', theme.primary);
       AppStorage.setOrCreate('themeText', theme.text);
       AppStorage.setOrCreate('themeSecondary', theme.secondary);
+      AppStorage.setOrCreate('themeAccent', theme.accent);
+      AppStorage.setOrCreate('themeCard', theme.card);
+      AppStorage.setOrCreate('themeSoft', theme.soft);
+      AppStorage.setOrCreate('themeMascot', theme.mascot);
     }
   }
 
@@ -35,6 +39,10 @@ export class ThemeManager {
       AppStorage.setOrCreate('themePrimary', theme.primary);
       AppStorage.setOrCreate('themeText', theme.text);
       AppStorage.setOrCreate('themeSecondary', theme.secondary);
+      AppStorage.setOrCreate('themeAccent', theme.accent);
+      AppStorage.setOrCreate('themeCard', theme.card);
+      AppStorage.setOrCreate('themeSoft', theme.soft);
+      AppStorage.setOrCreate('themeMascot', theme.mascot);
     }
   }
 }

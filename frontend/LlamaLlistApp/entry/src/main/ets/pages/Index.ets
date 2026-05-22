@@ -60,6 +60,10 @@ struct Index {
   @StorageLink('themePrimary') themePrimary: string = '#705C53';
   @StorageLink('themeText') themeText: string = '#4A3933';
   @StorageLink('themeSecondary') themeSecondary: string = '#A89982';
+  @StorageLink('themeAccent') themeAccent: string = '#D9A85F';
+  @StorageLink('themeCard') themeCard: string = '#FFFFFF';
+  @StorageLink('themeSoft') themeSoft: string = '#EEF3E5';
+  @StorageLink('themeMascot') themeMascot: string = 'LL';
 
   @State todos: Todo[] = [];
   @State todoTitleInput: string = '';
@@ -144,19 +148,7 @@ struct Index {
       const qs = params.length > 0 ? '?' + params.join('&') : '';
       const data = await request<Todo[]>(`/todos/${qs}`, 'GET');
 
-      let rawList = data ?? [];
-      this.todos = rawList.sort((a: Todo, b: Todo) => {
-        if (a.status === 'completed' && b.status !== 'completed') return 1;
-        if (a.status !== 'completed' && b.status === 'completed') return -1;
-
-        if (!a.deadline && !b.deadline) return 0;
-        if (!a.deadline) return 1;
-        if (!b.deadline) return -1;
-
-        const timeA = new Date(a.deadline).getTime();
-        const timeB = new Date(b.deadline).getTime();
-        return timeA - timeB;
-      });
+      this.todos = this.sortTodos(data ?? []);
     } catch (e) {
       const error = e as Error;
       console.error('加载待办失败', error.message);
@@ -166,7 +158,7 @@ struct Index {
   async createTodo(): Promise<void> {
     const title = this.todoTitleInput.trim();
     if (!title) {
-      promptAction.showToast({ message: '🦙 待办标题不能为空' });
+      promptAction.showToast({ message: '待办标题不能为空' });
       return;
     }
     let deadlineIso: string | undefined = undefined;
@@ -188,7 +180,7 @@ struct Index {
       this.todoDeadlineInput = '';
       this.showTodoInput = false;
       await this.fetchTodos();
-      promptAction.showToast({ message: '任务已添加 ✓' });
+      promptAction.showToast({ message: '任务已添加' });
     } catch (e) {
       const error = e as Error;
       console.error('添加待办失败', error.message);
@@ -198,20 +190,55 @@ struct Index {
     }
   }
 
-  async setTodoStatus(id: number, status: TodoStatus): Promise<void> {
-    try {
-      const payload: TodoUpdateRequest = { status };
-      await request<Todo>(`/todos/${id}`, 'PUT', payload);
-      await this.fetchTodos();
-    } catch (e) {
-      const error = e as Error;
-      console.error('更新状态失败', error.message);
-      promptAction.showToast({ message: '更新状态失败' });
-    }
+  private sortTodos(list: Todo[]): Todo[] {
+    return list.sort((a: Todo, b: Todo) => {
+      if (a.status === 'completed' && b.status !== 'completed') return 1;
+      if (a.status !== 'completed' && b.status === 'completed') return -1;
+
+      const priorityOrder: Record<string, number> = {
+        'important_urgent': 0,
+        'not_important_urgent': 1,
+        'important_not_urgent': 2,
+        'not_important_not_urgent': 3
+      };
+      const aPriority = priorityOrder[a.priority ?? 'important_urgent'];
+      const bPriority = priorityOrder[b.priority ?? 'important_urgent'];
+      if (aPriority !== bPriority) return aPriority - bPriority;
+
+      if (!a.deadline && !b.deadline) return 0;
+      if (!a.deadline) return 1;
+      if (!b.deadline) return -1;
+
+      const timeA = new Date(a.deadline).getTime();
+      const timeB = new Date(b.deadline).getTime();
+      return timeA - timeB;
+    });
   }
 
-  async setTodoPriority(id: number, priority: TodoPriority): Promise<void> {
-    // 不使用展开运算符，手动构造新对象
+  private todoMatchesCurrentFilter(todo: Todo): boolean {
+    const statusMatched = this.statusFilter === 'all' || todo.status === this.statusFilter;
+    const priorityMatched = this.priorityFilter === 'all' || todo.priority === this.priorityFilter;
+    return statusMatched && priorityMatched;
+  }
+
+  private updateTodoStatusLocal(id: number, status: TodoStatus): void {
+    const nextTodos = this.todos.map((t: Todo): Todo => {
+      if (t.id === id) {
+        return {
+          id: t.id,
+          title: t.title,
+          status: status,
+          priority: t.priority,
+          deadline: t.deadline,
+          note_id: t.note_id
+        };
+      }
+      return t;
+    }).filter((t: Todo): boolean => this.todoMatchesCurrentFilter(t));
+    this.todos = this.sortTodos(nextTodos);
+  }
+
+  private updateTodoPriorityLocal(id: number, priority: TodoPriority): void {
     const nextTodos = this.todos.map((t: Todo): Todo => {
       if (t.id === id) {
         return {
@@ -224,19 +251,45 @@ struct Index {
         };
       }
       return t;
-    });
-    this.todos = nextTodos;
+    }).filter((t: Todo): boolean => this.todoMatchesCurrentFilter(t));
+    this.todos = this.sortTodos(nextTodos);
+  }
 
+  private nextStatusForCheck(todo: Todo): TodoStatus {
+    return todo.status === 'completed' ? this.getFallbackStatus(todo.deadline) : 'completed';
+  }
+
+  async toggleTodoDone(todo: Todo): Promise<void> {
+    await this.setTodoStatus(todo.id, this.nextStatusForCheck(todo));
+  }
+
+  async setTodoStatus(id: number, status: TodoStatus): Promise<void> {
+    const previousTodos = this.todos;
+    this.updateTodoStatusLocal(id, status);
     try {
-      const payload: TodoUpdateRequest = { status: this.getCurrentStatusById(id), priority };
+      const payload: TodoUpdateRequest = { status };
       await request<Todo>(`/todos/${id}`, 'PUT', payload);
-      await this.fetchTodos();
+    } catch (e) {
+      this.todos = previousTodos;
+      const error = e as Error;
+      console.error('更新状态失败', error.message);
+      promptAction.showToast({ message: '更新状态失败' });
+    }
+  }
+
+  async setTodoPriority(id: number, priority: TodoPriority): Promise<void> {
+    const previousTodos = this.todos;
+    const currentStatus = this.getCurrentStatusById(id);
+    this.updateTodoPriorityLocal(id, priority);
+    try {
+      const payload: TodoUpdateRequest = { status: currentStatus, priority };
+      await request<Todo>(`/todos/${id}`, 'PUT', payload);
       promptAction.showToast({ message: '优先级已更新' });
     } catch (e) {
+      this.todos = previousTodos;
       const error = e as Error;
       console.error('更新优先级失败', error.message);
       promptAction.showToast({ message: '更新优先级失败' });
-      await this.fetchTodos();
     }
   }
 
@@ -324,9 +377,9 @@ struct Index {
 
   private getPriorityLabel(p: string): string {
     const map: Record<string, string> = {
-      'important_urgent': '重要紧急',
+      'important_urgent': '重要且紧急',
       'important_not_urgent': '重要不紧急',
-      'not_important_urgent': '不重要紧急',
+      'not_important_urgent': '紧急不重要',
       'not_important_not_urgent': '不重要不紧急'
     };
     return map[p] || p;
@@ -388,6 +441,44 @@ struct Index {
     return '';
   }
 
+  private themeCoverResource(): Resource {
+    if (this.currentTheme.id === 2) {
+      return $r('app.media.note_bg_andes');
+    }
+    if (this.currentTheme.id === 3) {
+      return $r('app.media.note_bg_wool');
+    }
+    if (this.currentTheme.id === 4) {
+      return $r('app.media.note_bg_sunrise');
+    }
+    if (this.currentTheme.id === 5) {
+      return $r('app.media.note_bg_ranch');
+    }
+    if (this.currentTheme.id === 6) {
+      return $r('app.media.note_bg_caravan');
+    }
+    return $r('app.media.note_bg_meadow');
+  }
+
+  private noteCoverResource(note?: Note): Resource {
+    const key = note && note.view_type ? note.view_type : '';
+    if (key === 'andes') return $r('app.media.note_bg_andes');
+    if (key === 'wool') return $r('app.media.note_bg_wool');
+    if (key === 'sunrise') return $r('app.media.note_bg_sunrise');
+    if (key === 'ranch') return $r('app.media.note_bg_ranch');
+    if (key === 'caravan') return $r('app.media.note_bg_caravan');
+    if (key === 'meadow') return $r('app.media.note_bg_meadow');
+    return this.themeCoverResource();
+  }
+
+  private firstImagePath(note: Note): string {
+    if (!note.image_paths || note.image_paths.trim() === '') {
+      return '';
+    }
+    const paths = note.image_paths.split(',').filter((path: string) => path.trim() !== '');
+    return paths.length > 0 ? paths[0] : '';
+  }
+
   build(): void {
     Column() {
       Tabs({ barPosition: BarPosition.End, controller: this.controller }) {
@@ -410,7 +501,7 @@ struct Index {
         }
       })
       .barHeight(60)
-      .backgroundColor('#FFFFFF')
+      .backgroundColor(this.themeCard)
       .barMode(BarMode.Fixed)
     }
     .width('100%')
@@ -422,11 +513,11 @@ struct Index {
     Column() {
       SymbolGlyph($r(icon))
         .fontSize(22)
-        .fontColor([this.currentIndex === index ? '#705C53' : '#D2C4B0'])
+        .fontColor([this.currentIndex === index ? this.themePrimary : this.themeSecondary])
       Text(title)
         .fontSize(10)
         .fontWeight(FontWeight.Medium)
-        .fontColor(this.currentIndex === index ? '#705C53' : '#D2C4B0')
+        .fontColor(this.currentIndex === index ? this.themePrimary : this.themeSecondary)
         .margin({ top: 4 })
     }
     .width('100%')
@@ -434,15 +525,24 @@ struct Index {
 
   @Builder MeadowHeader(): void {
     Row() {
+      Text(this.themeMascot)
+        .fontSize(30)
+        .width(44)
+        .height(44)
+        .textAlign(TextAlign.Center)
+        .backgroundColor(this.themeSoft)
+        .borderRadius(16)
+        .margin({ right: 10 })
+
       Column() {
         Text('Llama Meadow')
           .fontSize(28)
           .fontWeight(FontWeight.Bolder)
-          .fontColor('#4A3933')
+          .fontColor(this.themeText)
           .letterSpacing(1)
         Text('发现并记录你的灵感碎片')
           .fontSize(12)
-          .fontColor('#D2C4B0')
+          .fontColor(this.themeSecondary)
           .margin({ top: 4 })
       }
       .alignItems(HorizontalAlign.Start)
@@ -451,7 +551,7 @@ struct Index {
 
       SymbolGlyph($r('sys.symbol.magnifyingglass'))
         .fontSize(22)
-        .fontColor(['#705C53'])
+        .fontColor([this.themePrimary])
         .onClick(() => router.pushUrl({ url: 'pages/SearchPage' }))
     }
     .width('100%')
@@ -462,18 +562,16 @@ struct Index {
   NotesTab(): void {
     Stack({ alignContent: Alignment.BottomEnd }) {
       Column() {
-        this.MeadowHeader()
-
-        this.HomeInsightPanel()
+        this.LlamaDashboardHero()
 
         Scroll() {
           Row({ space: 12 }) {
             Text('全部')
               .fontSize(14)
               .fontWeight(this.selectedTagId === null ? FontWeight.Bold : FontWeight.Normal)
-              .fontColor(this.selectedTagId === null ? '#705C53' : '#A89982')
+              .fontColor(this.selectedTagId === null ? '#FFFFFF' : this.themePrimary)
               .padding({ left: 16, right: 16, top: 8, bottom: 8 })
-              .backgroundColor(this.selectedTagId === null ? '#EFEBE9' : Color.Transparent)
+              .backgroundColor(this.selectedTagId === null ? this.themePrimary : this.themeSoft)
               .borderRadius(20)
               .onClick(() => {
                 this.selectedTagId = null;
@@ -484,9 +582,9 @@ struct Index {
               Text(tag.name)
                 .fontSize(14)
                 .fontWeight(this.selectedTagId === tag.id ? FontWeight.Bold : FontWeight.Normal)
-                .fontColor(this.selectedTagId === tag.id ? '#705C53' : '#A89982')
+                .fontColor(this.selectedTagId === tag.id ? '#FFFFFF' : this.themePrimary)
                 .padding({ left: 16, right: 16, top: 8, bottom: 8 })
-                .backgroundColor(this.selectedTagId === tag.id ? '#EFEBE9' : Color.Transparent)
+                .backgroundColor(this.selectedTagId === tag.id ? this.themePrimary : this.themeSoft)
                 .borderRadius(20)
                 .onClick(() => {
                   this.selectedTagId = tag.id;
@@ -494,7 +592,7 @@ struct Index {
                 })
             }, (tag: Tag) => tag.id.toString())
 
-            Text('＋')
+            Text('+')
               .fontSize(20)
               .fontColor('#A89982')
               .padding({ left: 12, right: 12 })
@@ -504,7 +602,7 @@ struct Index {
         }
         .scrollable(ScrollDirection.Horizontal)
         .scrollBar(BarState.Off)
-        .margin({ top: 10, bottom: 8 })
+        .margin({ top: 12, bottom: 10 })
 
         if (this.notes.length === 0) {
           this.EmptyState()
@@ -527,7 +625,7 @@ struct Index {
               })
             }, (item: Note) => item.id.toString())
           }
-          .padding({ left: 20, right: 20, bottom: 0 })
+          .padding({ left: 20, right: 20, top: 2, bottom: 0 })
           .layoutWeight(1)
           .scrollBar(BarState.Off)
           .edgeEffect(EdgeEffect.Spring)
@@ -541,7 +639,7 @@ struct Index {
       }
       .width(52)
       .height(52)
-      .backgroundColor('#705C53')
+      .backgroundColor(this.themePrimary)
       .shadow({ radius: 12, color: '#204A3933', offsetY: 4 })
       .margin({ right: 20, bottom: 20 })
       .onClick(() => router.pushUrl({ url: 'pages/NoteEdit' }))
@@ -553,6 +651,97 @@ struct Index {
 
 
   @Builder
+  LlamaDashboardHero(): void {
+    Stack({ alignContent: Alignment.TopEnd }) {
+      Image(this.themeCoverResource())
+        .width('100%')
+        .height(242)
+        .objectFit(ImageFit.Cover)
+        .opacity(0.74)
+
+      Column({ space: 14 }) {
+        Row({ space: 12 }) {
+          Column({ space: 5 }) {
+            Text('Llama Llist')
+              .fontSize(28)
+              .fontWeight(FontWeight.Bolder)
+              .fontColor(this.themeText)
+            Text(this.currentTheme.name + '  ' + this.currentTheme.slogan)
+              .fontSize(12)
+              .fontColor(this.themeText)
+              .opacity(0.72)
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+
+          Image($r('app.media.llama_mascot'))
+            .width(58)
+            .height(58)
+            .objectFit(ImageFit.Contain)
+            .backgroundColor('#CCFFFFFF')
+            .borderRadius(22)
+            .shadow({ radius: 10, color: '#184A3933', offsetY: 4 })
+
+          Row({ space: 5 }) {
+            SymbolGlyph($r('sys.symbol.magnifyingglass'))
+              .fontSize(17)
+              .fontColor([this.themePrimary])
+            Text('搜索')
+              .fontSize(12)
+              .fontColor(this.themePrimary)
+              .fontWeight(FontWeight.Medium)
+          }
+          .height(38)
+          .padding({ left: 11, right: 12 })
+          .backgroundColor('#E6FFFFFF')
+          .borderRadius(18)
+          .shadow({ radius: 8, color: '#124A3933', offsetY: 3 })
+          .onClick(() => router.pushUrl({ url: 'pages/SearchPage' }))
+        }
+        .width('100%')
+
+        Row({ space: 9 }) {
+          this.DashboardMetric('灵感笔记', this.notes.length.toString(), 'sys.symbol.house', this.themeSoft)
+          this.DashboardMetric('待办清单', this.countPendingTodos().toString(), 'sys.symbol.checkmark_circle', '#F8F3E5')
+          this.DashboardMetric('AI 整理', this.countAIProcessedNotes().toString(), 'sys.symbol.magnifyingglass', '#EEF4EA')
+        }
+        .width('100%')
+      }
+      .width('100%')
+      .padding({ left: 20, right: 20, top: 34, bottom: 18 })
+    }
+    .width('100%')
+    .height(248)
+    .clip(true)
+  }
+
+  @Builder
+  DashboardMetric(label: string, value: string, icon: string, bg: string): void {
+    Column({ space: 5 }) {
+      SymbolGlyph($r(icon))
+        .fontSize(20)
+        .fontColor([this.themePrimary])
+      Text(label)
+        .fontSize(11)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.themeText)
+        .maxLines(1)
+      Text(value + ' 项')
+        .fontSize(10)
+        .fontColor(this.themeSecondary)
+        .maxLines(1)
+    }
+    .layoutWeight(1)
+    .height(76)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .backgroundColor(bg)
+    .borderRadius(15)
+    .border({ width: 1, color: '#40FFFFFF' })
+    .shadow({ radius: 8, color: '#104A3933', offsetY: 3 })
+  }
+
+  @Builder
   HomeInsightPanel(): void {
     Column({ space: 12 }) {
       Row() {
@@ -560,7 +749,7 @@ struct Index {
           Text('今日概览')
             .fontSize(18)
             .fontWeight(FontWeight.Bold)
-            .fontColor('#4A3933')
+            .fontColor(this.themeText)
 
           Text('笔记、待办和 AI 整理状态一眼可见')
             .fontSize(12)
@@ -570,7 +759,7 @@ struct Index {
 
         Blank()
 
-        // Text('AI 闭环')
+        // Text('AI 整理')
         //   .fontSize(11)
         //   .fontColor('#6F5647')
         //   .padding({ left: 10, right: 10, top: 5, bottom: 5 })
@@ -581,7 +770,7 @@ struct Index {
 
       Row({ space: 10 }) {
         this.InsightItem('笔记', this.notes.length.toString(), '#F7EFE6')
-        this.InsightItem('AI 摘要', this.countAIProcessedNotes().toString(), '#EEF4EA')
+        this.InsightItem('AI 整理', this.countAIProcessedNotes().toString(), '#EEF4EA')
         this.InsightItem('待处理', this.countPendingTodos().toString(), '#F4EFE8')
         this.InsightItem('今日到期', this.countTodayDueTodos().toString(), '#FFF4E6')
       }
@@ -655,6 +844,86 @@ struct Index {
     .height('100%')
   }
 
+  private todoCountByStatus(status: TodoStatus): number {
+    return this.todos.filter((todo: Todo) => todo.status === status).length;
+  }
+
+  private urgentTodoCount(): number {
+    return this.todos.filter((todo: Todo) => todo.priority === 'important_urgent' || todo.priority === 'not_important_urgent').length;
+  }
+
+  @Builder TodoOverviewPanel(): void {
+    Stack({ alignContent: Alignment.BottomEnd }) {
+      Image(this.themeCoverResource())
+        .width('100%')
+        .height(118)
+        .objectFit(ImageFit.Cover)
+        .opacity(0.22)
+
+      Column({ space: 14 }) {
+        Row() {
+          Column({ space: 4 }) {
+            Text('今日任务牧场')
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(this.themeText)
+            Text('点击圆圈完成任务，彩色圆点调整紧急程度')
+              .fontSize(11)
+              .fontColor(this.themeSecondary)
+          }
+          .alignItems(HorizontalAlign.Start)
+          Blank()
+          Image($r('app.media.llama_mascot'))
+            .width(54)
+            .height(54)
+            .objectFit(ImageFit.Contain)
+        }
+        .width('100%')
+
+        Row({ space: 8 }) {
+          this.TodoStatChip('待处理', this.todoCountByStatus('pending').toString(), this.themePrimary, this.themeSoft)
+          this.TodoStatChip('已延期', this.todoCountByStatus('delayed').toString(), '#C0392B', '#FDECEC')
+          this.TodoStatChip('紧急', this.urgentTodoCount().toString(), '#D97B33', '#FFF3E0')
+        }
+        .width('100%')
+      }
+      .width('100%')
+      .padding({ left: 18, right: 18, top: 16, bottom: 16 })
+    }
+    .width('100%')
+    .height(150)
+    .backgroundColor(this.themeCard)
+    .borderRadius(22)
+    .clip(true)
+    .shadow({ radius: 10, color: '#104A3933', offsetY: 4 })
+    .margin({ left: 20, right: 20, bottom: 14 })
+  }
+
+  @Builder TodoStatChip(label: string, value: string, color: string, bg: string): void {
+    Column({ space: 3 }) {
+      Text(value)
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(color)
+      Text(label)
+        .fontSize(10)
+        .fontColor(this.themeSecondary)
+    }
+    .layoutWeight(1)
+    .padding({ top: 10, bottom: 9 })
+    .backgroundColor(bg)
+    .borderRadius(14)
+  }
+
+  @Builder FilterTitle(label: string): void {
+    Text(label)
+      .fontSize(12)
+      .fontWeight(FontWeight.Medium)
+      .fontColor(this.themeSecondary)
+      .width('100%')
+      .padding({ left: 24, right: 24, top: 2, bottom: 6 })
+  }
+
   @Builder PeakSection(): void {
     Stack({ alignContent: Alignment.BottomEnd }) {
       Column() {
@@ -665,7 +934,7 @@ struct Index {
               .fontWeight(FontWeight.Bolder)
               .fontColor('#4A3933')
               .letterSpacing(1)
-            Text('逐一攀越你的每一个目标')
+            Text('逐步翻越每一个目标')
               .fontSize(12)
               .fontColor('#D2C4B0')
               .margin({ top: 4 })
@@ -675,6 +944,9 @@ struct Index {
         .width('100%')
         .padding({ left: 24, right: 24, top: 30, bottom: 15 })
 
+        this.TodoOverviewPanel()
+
+        this.FilterTitle('状态筛选')
         List({ space: 8 }) {
           ForEach(['all', 'pending', 'completed', 'delayed'], (s: TodoStatus | 'all') => {
             ListItem() {
@@ -696,6 +968,7 @@ struct Index {
         .padding({ left: 20, right: 20 })
         .scrollBar(BarState.Off)
 
+        this.FilterTitle('优先级筛选')
         List({ space: 8 }) {
           ForEach(['all', 'important_urgent', 'important_not_urgent', 'not_important_urgent', 'not_important_not_urgent'], (p: string) => {
             ListItem() {
@@ -719,8 +992,12 @@ struct Index {
 
         if (this.todos.length === 0) {
           Column({ space: 12 }) {
-            Text('🏔️').fontSize(52)
-            Text('还没有任务，点击右下角 + 开始攀登')
+            Image($r('app.media.llama_mascot'))
+              .width(86)
+              .height(86)
+              .objectFit(ImageFit.Contain)
+              .opacity(0.82)
+            Text('还没有任务，点击右下角 + 开始安排')
               .fontSize(14)
               .fontColor('#A89982')
               .textAlign(TextAlign.Center)
@@ -733,9 +1010,9 @@ struct Index {
           List({ space: 12 }) {
             ForEach(this.todos, (todo: Todo) => {
               ListItem() {
-                this.TodoCard(todo)
+                this.TodoCardCompact(todo)
               }
-            }, (todo: Todo) => todo.id.toString() + "_" + todo.priority)
+            }, (todo: Todo) => todo.id.toString() + "_" + todo.status + "_" + todo.priority)
           }
           .layoutWeight(1)
           .padding({ left: 20, right: 20, top: 12, bottom: 20 })
@@ -752,7 +1029,7 @@ struct Index {
       }
       .width(52)
       .height(52)
-      .backgroundColor('#705C53')
+      .backgroundColor(this.themePrimary)
       .shadow({ radius: 12, color: '#204A3933', offsetY: 4 })
       .margin({ right: 20, bottom: 20 })
       .onClick(() => {
@@ -764,22 +1041,42 @@ struct Index {
 
   @Builder PackSection(): void {
     Column() {
-      Text('Llama Pack')
-        .fontSize(28)
-        .fontWeight(FontWeight.Bolder)
-        .fontColor('#4A3933')
-        .letterSpacing(1)
-        .padding({ left: 24, top: 30, bottom: 4 })
-      Text('管理你的一切')
-        .fontSize(12)
-        .fontColor('#D2C4B0')
-        .padding({ left: 24, bottom: 20 })
+      Stack({ alignContent: Alignment.BottomStart }) {
+        Image(this.themeCoverResource())
+          .width('100%')
+          .height(155)
+          .objectFit(ImageFit.Cover)
+          .opacity(0.7)
+
+        Row() {
+          Column({ space: 5 }) {
+            Text('Llama Pack')
+              .fontSize(28)
+              .fontWeight(FontWeight.Bolder)
+              .fontColor(this.themeText)
+            Text('主题、模板、标签和 AI 设置')
+              .fontSize(12)
+              .fontColor(this.themeText)
+              .opacity(0.72)
+          }
+          .alignItems(HorizontalAlign.Start)
+          Blank()
+          Image($r('app.media.llama_mascot'))
+            .width(70)
+            .height(70)
+            .objectFit(ImageFit.Contain)
+        }
+        .width('100%')
+        .padding({ left: 24, right: 24, bottom: 18 })
+      }
+      .width('100%')
+      .height(165)
 
       List({ space: 1 }) {
-        this.PackItem('🏷️ 标签管理', () => router.pushUrl({ url: 'pages/TagManage' }))
-        this.PackItem('🔍 笔记搜索', () => router.pushUrl({ url: 'pages/SearchPage' }))
-        this.PackItem('🎨 主题装扮', () => this.openThemeDialog())
-        this.PackItem('⚙️ 设置中心', () => this.openSettingsDialog())
+        this.PackItem('标签牧场', () => router.pushUrl({ url: 'pages/TagManage' }))
+        this.PackItem('灵感搜索', () => router.pushUrl({ url: 'pages/SearchPage' }))
+        this.PackItem('主题装扮', () => this.openThemeDialog())
+        this.PackItem('AI 设置中心', () => this.openSettingsDialog())
       }
       .backgroundColor('#FFF')
       .borderRadius(16)
@@ -794,12 +1091,13 @@ struct Index {
 
   @Builder PackItem(title: string, onClick: () => void): void {
     Row() {
-      Text(title).fontSize(16).fontColor('#4A3933')
+      Text(title).fontSize(16).fontWeight(FontWeight.Medium).fontColor(this.themeText)
       Blank()
-      Text('→').fontColor('#D2C4B0')
+      Text('>').fontColor('#D2C4B0')
     }
     .width('100%')
     .padding(18)
+    .backgroundColor(this.themeCard)
     .onClick(onClick)
   }
 
@@ -985,8 +1283,123 @@ struct Index {
     .shadow({ radius: 10, color: '#084A3933', offsetY: 4 })
   }
 
+  @Builder TodoCardCompact(todo: Todo): void {
+    Row({ space: 12 }) {
+      Stack({ alignContent: Alignment.Center }) {
+        if (todo.status === 'completed') {
+          Text('✓')
+            .fontSize(12)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#FFFFFF')
+        }
+      }
+        .width(18)
+        .height(18)
+        .borderRadius(9)
+        .border({ width: 1.4, color: todo.status === 'completed' ? this.themePrimary : this.themeSecondary })
+        .backgroundColor(todo.status === 'completed' ? this.themePrimary : '#00FFFFFF')
+        .onClick(() => this.toggleTodoDone(todo))
+
+      Column({ space: 8 }) {
+        Row() {
+          Text(todo.title)
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(todo.status === 'completed' ? this.themeSecondary : this.themeText)
+            .decoration({
+              type: todo.status === 'completed' ? TextDecorationType.LineThrough : TextDecorationType.None
+            })
+            .maxLines(2)
+            .layoutWeight(1)
+
+          Text(this.todoStatusConfig(todo.status).label)
+            .fontSize(11)
+            .fontColor(this.todoStatusConfig(todo.status).color)
+            .padding({ left: 9, right: 9, top: 4, bottom: 4 })
+            .backgroundColor(this.todoStatusConfig(todo.status).bg)
+            .borderRadius(12)
+        }
+        .width('100%')
+
+        Row() {
+          Text(this.getPriorityLabel(todo.priority ?? 'important_urgent'))
+            .fontSize(11)
+            .fontColor(this.getPriorityColor(todo.priority ?? 'important_urgent'))
+            .padding({ left: 9, right: 9, top: 4, bottom: 4 })
+            .backgroundColor(this.getPriorityBg(todo.priority ?? 'important_urgent'))
+            .borderRadius(12)
+
+          if (todo.deadline) {
+            Text(new Date(todo.deadline).toLocaleDateString())
+              .fontSize(11)
+              .fontColor(this.themeSecondary)
+              .margin({ left: 8 })
+          }
+
+          Blank()
+
+          Row({ space: 8 }) {
+            Circle({ width: 12, height: 12 }).fill('#D32F2F')
+              .opacity(todo.priority === 'important_urgent' ? 1 : 0.45)
+              .onClick(() => this.setTodoPriority(todo.id, 'important_urgent'))
+            Circle({ width: 12, height: 12 }).fill('#F57C00')
+              .opacity(todo.priority === 'important_not_urgent' ? 1 : 0.45)
+              .onClick(() => this.setTodoPriority(todo.id, 'important_not_urgent'))
+            Circle({ width: 12, height: 12 }).fill('#1976D2')
+              .opacity(todo.priority === 'not_important_urgent' ? 1 : 0.45)
+              .onClick(() => this.setTodoPriority(todo.id, 'not_important_urgent'))
+            Circle({ width: 12, height: 12 }).fill('#388E3C')
+              .opacity(todo.priority === 'not_important_not_urgent' ? 1 : 0.45)
+              .onClick(() => this.setTodoPriority(todo.id, 'not_important_not_urgent'))
+          }
+          .margin({ right: 10 })
+
+          SymbolGlyph($r('sys.symbol.trash'))
+            .fontSize(17)
+            .fontColor([this.themeSecondary])
+            .onClick(() => this.deleteTodo(todo.id))
+        }
+        .width('100%')
+      }
+      .layoutWeight(1)
+    }
+    .width('100%')
+    .padding({ left: 15, right: 15, top: 13, bottom: 13 })
+    .backgroundColor('#DFFFFFFF')
+    .borderRadius(18)
+    .shadow({ radius: 8, color: '#084A3933', offsetY: 3 })
+  }
+
   @Builder NoteCard(note: Note): void {
     Column({ space: 12 }) {
+      Stack({ alignContent: Alignment.BottomStart }) {
+        if (this.firstImagePath(note) !== '') {
+          Image(this.firstImagePath(note))
+            .width('100%')
+            .height(116)
+            .objectFit(ImageFit.Cover)
+            .borderRadius(18)
+        } else {
+          Image(this.noteCoverResource(note))
+            .width('100%')
+            .height(116)
+            .objectFit(ImageFit.Cover)
+            .borderRadius(18)
+            .opacity(0.82)
+        }
+
+        Text(this.safeSummary(note) !== '' ? 'AI 已整理' : '等待整理')
+          .fontSize(11)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#FFFFFF')
+          .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+          .backgroundColor(this.safeSummary(note) !== '' ? this.themePrimary : '#887A73')
+          .borderRadius(12)
+          .margin({ left: 10, bottom: 10 })
+      }
+      .width('100%')
+      .height(116)
+
       Row() {
         Column({ space: 5 }) {
           Text(note.title)
@@ -1004,9 +1417,9 @@ struct Index {
             if (note.tag_id && this.tagNameById(note.tag_id)) {
               Text(this.tagNameById(note.tag_id))
                 .fontSize(11)
-                .fontColor('#705C53')
+                .fontColor(this.themePrimary)
                 .padding({ left: 8, right: 8, top: 3, bottom: 3 })
-                .backgroundColor('#EFEBE9')
+                .backgroundColor(this.themeSoft)
                 .borderRadius(10)
             }
           }
@@ -1018,16 +1431,16 @@ struct Index {
           Text('AI 摘要')
             .fontSize(11)
             .fontWeight(FontWeight.Medium)
-            .fontColor('#5F7652')
+            .fontColor(this.themePrimary)
             .padding({ left: 10, right: 10, top: 5, bottom: 5 })
-            .backgroundColor('#EEF4EA')
+            .backgroundColor(this.themeSoft)
             .borderRadius(13)
         } else {
           Text('未整理')
             .fontSize(11)
             .fontColor('#A89982')
             .padding({ left: 10, right: 10, top: 5, bottom: 5 })
-            .backgroundColor('#F6F1EA')
+            .backgroundColor(this.themeSoft)
             .borderRadius(13)
         }
       }
@@ -1044,7 +1457,7 @@ struct Index {
         }
         .width('100%')
         .padding({ left: 14, right: 14, top: 12, bottom: 12 })
-        .backgroundColor('#FBF8F3')
+        .backgroundColor(this.themeSoft)
         .borderRadius(14)
       } else if (note.content && note.content.trim() !== '') {
         Text(note.content.trim())
@@ -1071,22 +1484,22 @@ struct Index {
 
         Text('查看')
           .fontSize(12)
-          .fontColor('#705C53')
+          .fontColor(this.themePrimary)
           .padding({ left: 11, right: 11, top: 5, bottom: 5 })
-          .backgroundColor('#EFEBE9')
+          .backgroundColor(this.themeSoft)
           .borderRadius(12)
       }
       .width('100%')
     }
     .padding(18)
-    .backgroundColor('#FFFFFF')
-    .borderRadius(22)
-    .shadow({ radius: 14, color: '#0D4A3933', offsetY: 5 })
+    .backgroundColor(this.themeCard)
+    .borderRadius(24)
+    .shadow({ radius: 16, color: '#124A3933', offsetY: 6 })
   }
 
   @Builder EmptyState(): void {
     Column() {
-      Text('🦙').fontSize(60)
+      Text('Llama Llist').fontSize(24).fontWeight(FontWeight.Bold).fontColor('#705C53')
       Text('草坪空荡荡，快去采撷灵感吧').fontSize(14).fontColor('#A89982').margin({ top: 10 })
     }
     .layoutWeight(1)
@@ -1161,7 +1574,7 @@ struct ThemeDialog {
 
   build(): void {
     Column({ space: 16 }) {
-      Text('🎨 选择主题装扮')
+      Text('选择主题装扮')
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
         .fontColor('#4A3933')
@@ -1169,6 +1582,14 @@ struct ThemeDialog {
 
       ForEach(THEMES, (theme: ThemeConfig) => {
         Row({ space: 14 }) {
+          Text(theme.mascot)
+            .fontSize(24)
+            .width(34)
+            .height(34)
+            .textAlign(TextAlign.Center)
+            .backgroundColor(theme.soft)
+            .borderRadius(12)
+
           // 左侧色块预览
           Row({ space: 6 }) {
             Circle({ width: 18, height: 18 }).fill(theme.primary)
@@ -1176,10 +1597,17 @@ struct ThemeDialog {
             Circle({ width: 18, height: 18 }).fill(theme.accent)
           }
 
-          Text(theme.name)
-            .fontSize(15)
-            .fontColor('#4A3933')
-            .layoutWeight(1)
+          Column({ space: 3 }) {
+            Text(theme.name)
+              .fontSize(15)
+              .fontColor('#4A3933')
+              .fontWeight(FontWeight.Medium)
+            Text(theme.slogan)
+              .fontSize(11)
+              .fontColor(theme.primary)
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
 
           // 当前选中标记
           if (this.currentThemeId === theme.id) {
@@ -1191,7 +1619,7 @@ struct ThemeDialog {
         }
         .width('100%')
         .padding({ left: 16, right: 16, top: 14, bottom: 14 })
-        .backgroundColor(this.currentThemeId === theme.id ? '#EFEBE9' : '#FAFAFA')
+        .backgroundColor(this.currentThemeId === theme.id ? theme.soft : '#FAFAFA')
         .borderRadius(12)
         .onClick(() => {
           this.onSelect(theme.id);

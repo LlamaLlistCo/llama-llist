@@ -34,6 +34,9 @@ interface NoteTemplate {
   category: string;
   content_skeleton: string;
   icon?: string;
+  description?: string;
+  sort_order?: number;
+  is_system?: boolean;
 }
 
 interface UploadResponse {
@@ -56,6 +59,7 @@ interface AIExtractResponse {
 interface AISummarizeResponse {
   summary: string;
   keywords?: string[];
+  todos?: string[];
 }
 
 interface TodoApplyPayload {
@@ -167,6 +171,13 @@ struct TemplateDialog {
                   Text(item.category)
                     .fontSize(12)
                     .fontColor('#A89982');
+                  if (item.description && item.description.trim() !== '') {
+                    Text(item.description)
+                      .fontSize(11)
+                      .fontColor('#B7A58F')
+                      .maxLines(1)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis });
+                  }
                 }
                 .alignItems(HorizontalAlign.Start)
                 .layoutWeight(1);
@@ -402,6 +413,9 @@ struct AIDialog {
         this.aiResult.summary = this.normalizeSummary(cloudRes.summary);
         if (cloudRes.keywords && cloudRes.keywords.length > 0) {
           this.aiResult.keywords = this.normalizeList(cloudRes.keywords).slice(0, 8);
+        }
+        if (cloudRes.todos && cloudRes.todos.length > 0) {
+          this.aiResult.todos = this.normalizeList(this.aiResult.todos.concat(cloudRes.todos)).slice(0, 10);
         }
         this.cloudAIStatus = 'success';
       } else {
@@ -820,10 +834,32 @@ struct NoteEdit {
   @State aiResult: AIResult = { keywords: [], labels: [], todos: [], priority: 'normal', summary: '' };
   @State aiError: string = '';
   @StorageLink('themeBg') themeBg: string = '#F9F8F4';
+  @StorageLink('themePrimary') themePrimary: string = '#6F7F4F';
+  @StorageLink('themeText') themeText: string = '#3F382F';
+  @StorageLink('themeSecondary') themeSecondary: string = '#B7A887';
+  @StorageLink('themeAccent') themeAccent: string = '#D9A85F';
+  @StorageLink('themeSoft') themeSoft: string = '#EEF3E5';
+  @StorageLink('themeMascot') themeMascot: string = '🦙';
 
   private richController: RichEditorController = new RichEditorController();
   private plainContent: string = '';
   private aiDialogController: CustomDialogController | null = null;
+
+  private themeCoverResource(): Resource {
+    if (this.view_type === 'meadow') return $r('app.media.note_bg_meadow');
+    if (this.view_type === 'andes') return $r('app.media.note_bg_andes');
+    if (this.view_type === 'wool') return $r('app.media.note_bg_wool');
+    if (this.view_type === 'sunrise') return $r('app.media.note_bg_sunrise');
+    if (this.view_type === 'ranch') return $r('app.media.note_bg_ranch');
+    if (this.view_type === 'caravan') return $r('app.media.note_bg_caravan');
+    if (this.themeMascot === '☁️') {
+      return $r('app.media.note_bg_wool');
+    }
+    if (this.themeMascot === '⛰️' || this.themeMascot === '✦') {
+      return $r('app.media.note_bg_andes');
+    }
+    return $r('app.media.note_bg_meadow');
+  }
 
   aboutToAppear(): void {
     const params = router.getParams() as Record<string, number | string>;
@@ -1005,13 +1041,44 @@ struct NoteEdit {
     dController.open();
   }
 
+  @Builder
+  BackgroundOption(key: string, label: string, res: Resource): void {
+    Stack({ alignContent: Alignment.BottomStart }) {
+      Image(res)
+        .width(82)
+        .height(58)
+        .objectFit(ImageFit.Cover)
+        .borderRadius(14)
+        .opacity(this.view_type === key ? 1 : 0.72)
+
+      Text(label)
+        .fontSize(10)
+        .fontColor('#FFFFFF')
+        .padding({ left: 7, right: 7, top: 3, bottom: 3 })
+        .backgroundColor(this.view_type === key ? this.themePrimary : '#804A3933')
+        .borderRadius(9)
+        .margin({ left: 6, bottom: 6 })
+    }
+    .width(82)
+    .height(58)
+    .margin({ right: 10 })
+    .border({
+      width: this.view_type === key ? 2 : 0,
+      color: this.themePrimary
+    })
+    .borderRadius(16)
+    .onClick(() => {
+      this.view_type = key;
+    })
+  }
+
   build(): void {
     Column() {
       // 顶部导航栏
       Row() {
         SymbolGlyph($r('sys.symbol.chevron_left'))
           .fontSize(24)
-          .fontColor(['#705C53'])
+          .fontColor([this.themePrimary])
           .onClick(() => router.back());
 
         Blank();
@@ -1024,11 +1091,11 @@ struct NoteEdit {
         Blank();
 
         if (this.isSaving) {
-          LoadingProgress().width(24).height(24).color('#705C53');
+          LoadingProgress().width(24).height(24).color(this.themePrimary);
         } else {
           SymbolGlyph($r('sys.symbol.checkmark'))
             .fontSize(24)
-            .fontColor(['#705C53'])
+            .fontColor([this.themePrimary])
             .onClick(() => this.validateAndSave());
         }
       }
@@ -1036,6 +1103,63 @@ struct NoteEdit {
       .padding({ left: 20, right: 20, top: 20, bottom: 10 });
 
       // 标题
+      Stack({ alignContent: Alignment.BottomStart }) {
+        Image(this.themeCoverResource())
+          .width('100%')
+          .height(112)
+          .objectFit(ImageFit.Cover)
+          .borderRadius(24)
+          .opacity(0.82)
+
+        Row() {
+          Column({ space: 4 }) {
+            Text('灵感纸页')
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(this.themeText)
+            Text('记录、插图、模板与 AI 整理在这里汇合')
+              .fontSize(11)
+              .fontColor(this.themeText)
+              .opacity(0.7)
+          }
+          .alignItems(HorizontalAlign.Start)
+          Blank()
+          Image($r('app.media.llama_mascot'))
+            .width(58)
+            .height(58)
+            .objectFit(ImageFit.Contain)
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, bottom: 14 })
+      }
+      .width('90%')
+      .height(112)
+      .margin({ left: 20, right: 20, bottom: 12 })
+
+      Column({ space: 8 }) {
+        Text('笔记背景')
+          .fontSize(12)
+          .fontColor(this.themeSecondary)
+          .width('100%')
+
+        Scroll() {
+          Row() {
+            this.BackgroundOption('meadow', '草甸', $r('app.media.note_bg_meadow'))
+            this.BackgroundOption('andes', '纸本', $r('app.media.note_bg_andes'))
+            this.BackgroundOption('wool', '羊毛', $r('app.media.note_bg_wool'))
+            this.BackgroundOption('sunrise', '晨光', $r('app.media.note_bg_sunrise'))
+            this.BackgroundOption('ranch', '牧场', $r('app.media.note_bg_ranch'))
+            this.BackgroundOption('caravan', '驼队', $r('app.media.note_bg_caravan'))
+          }
+        }
+        .scrollable(ScrollDirection.Horizontal)
+        .scrollBar(BarState.Off)
+        .width('100%')
+        .height(66)
+      }
+      .width('100%')
+      .padding({ left: 24, right: 24, bottom: 10 })
+
       TextInput({ text: this.title, placeholder: '灵感标题...' })
         .fontSize(24)
         .fontWeight(FontWeight.Bold)
