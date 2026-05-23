@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Body
+from pydantic import BaseModel, Field, HttpUrl
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Any
 import json
@@ -11,6 +12,10 @@ from app.database import get_db
 from app.local_ai import extract_from_text
 
 router = APIRouter(tags=["ai"])
+
+
+class ApplyTodosPayload(BaseModel):
+    todos: list[str] = Field(default_factory=list, max_length=20)
 
 
 def _note_text(note) -> str:
@@ -52,6 +57,20 @@ def _extract_json_object(text: str) -> Dict[str, Any] | None:
         return None
 
 
+def _local_fallback_summary(text: str) -> Dict[str, Any]:
+    local = extract_from_text(text)
+    keywords = _dedupe(local.get("keywords"), 8)
+    todos = _dedupe(local.get("todos"), 10)
+    labels = _dedupe(local.get("labels"), 5)
+    source = "；".join((text or "").splitlines())
+    source = re.sub(r"\s+", " ", source).strip()
+    summary_seed = source[:160]
+    if not summary_seed:
+        summary_seed = "当前内容较少，建议补充关键信息后再总结。"
+    summary = _clip_summary(f"本地算法总结：{summary_seed}")
+    return {"summary": summary, "keywords": keywords, "todos": todos, "labels": labels}
+
+
 @router.post("/ai/local/extract/{note_id}")
 @router.post("/notes/{note_id}/ai/extract")
 async def local_extract(note_id: int, db: AsyncSession = Depends(get_db)):
@@ -73,14 +92,24 @@ async def cloud_summarize(note_id: int, db: AsyncSession = Depends(get_db)):
     if not note:
         raise HTTPException(status_code=404, detail="笔记不存在")
 
-    provider_url = (await crud.get_setting(db, "ai.provider_url") or "").strip()
-    provider_key = (await crud.get_setting(db, "ai.api_key") or os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY") or "").strip()
-    if not provider_key:
-        raise HTTPException(status_code=503, detail="云端模型未配置 API Key，已降级为端侧整理")
-
     text = _note_text(note)
     if not text:
         raise HTTPException(status_code=400, detail="笔记内容为空，无法总结")
+
+    provider_url = (await crud.get_setting(db, "ai.provider_url") or "").strip()
+    provider_key = (await crud.get_setting(db, "ai.api_key") or os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY") or "").strip()
+    model_name = (await crud.get_setting(db, "ai.model_name") or "deepseek-chat").strip()
+
+    if not provider_key:
+        fallback = _local_fallback_summary(text)
+        return {
+            "note_id": note_id,
+            "summary": fallback["summary"],
+            "keywords": fallback["keywords"],
+            "todos": fallback["todos"],
+            "source": "local_fallback",
+            "reason": "云端模型未配置 API Key"
+        }
 
     prompt = (
         "你是 Llama Llist 的笔记整理助手。请只返回 JSON，不要添加解释。\n"
@@ -91,26 +120,49 @@ async def cloud_summarize(note_id: int, db: AsyncSession = Depends(get_db)):
     )
 
     url = provider_url.rstrip("/") if provider_url else "https://api.deepseek.com/v1/chat/completions"
+    if provider_url:
+        try:
+            parsed_url = HttpUrl(provider_url)
+            if parsed_url.scheme != "https":
+                raise HTTPException(status_code=400, detail="云端 Provider URL 必须使用 HTTPS")
+        except Exception:
+            raise HTTPException(status_code=400, detail="云端 Provider URL 格式不合法")
+
     headers = {"Authorization": f"Bearer {provider_key}", "Content-Type": "application/json"}
     payload = {
-        "model": "deepseek-chat",
+        "model": model_name,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.2,
         "max_tokens": 900,
     }
 
+    data: Dict[str, Any] = {}
     try:
         async with httpx.AsyncClient(timeout=18.0) as client:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
-            data = response.json()
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="云端总结超时，已降级为端侧整理")
-    except httpx.RequestError as exc:
-        raise HTTPException(status_code=502, detail=f"云端模型请求失败: {exc}")
-    except httpx.HTTPStatusError as exc:
-        detail = exc.response.text[:300] if exc.response is not None else "unknown error"
-        raise HTTPException(status_code=exc.response.status_code, detail=f"云端模型错误: {detail}")
+            try:
+                data = response.json()
+            except json.JSONDecodeError:
+                fallback = _local_fallback_summary(text)
+                return {
+                    "note_id": note_id,
+                    "summary": fallback["summary"],
+                    "keywords": fallback["keywords"],
+                    "todos": fallback["todos"],
+                    "source": "local_fallback",
+                    "reason": "云端返回非 JSON 或空响应"
+                }
+    except (httpx.TimeoutException, httpx.RequestError, httpx.HTTPStatusError):
+        fallback = _local_fallback_summary(text)
+        return {
+            "note_id": note_id,
+            "summary": fallback["summary"],
+            "keywords": fallback["keywords"],
+            "todos": fallback["todos"],
+            "source": "local_fallback",
+            "reason": "云端请求失败，已自动降级"
+        }
 
     content = ""
     try:
@@ -129,19 +181,28 @@ async def cloud_summarize(note_id: int, db: AsyncSession = Depends(get_db)):
         todos = []
 
     if not summary:
-        raise HTTPException(status_code=502, detail="云端模型返回为空，已降级为端侧整理")
+        fallback = _local_fallback_summary(text)
+        return {
+            "note_id": note_id,
+            "summary": fallback["summary"],
+            "keywords": fallback["keywords"],
+            "todos": fallback["todos"],
+            "source": "local_fallback",
+            "reason": "云端返回为空，已自动降级"
+        }
 
-    return {"note_id": note_id, "summary": summary, "keywords": keywords, "todos": todos}
+    return {"note_id": note_id, "summary": summary, "keywords": keywords, "todos": todos, "source": "cloud"}
+
 
 
 @router.post("/ai/apply_todos/{note_id}")
 @router.post("/notes/{note_id}/ai/apply_todos")
-async def apply_todos(note_id: int, payload: Dict[str, Any] = Body(...), db: AsyncSession = Depends(get_db)):
+async def apply_todos(note_id: int, payload: ApplyTodosPayload = Body(...), db: AsyncSession = Depends(get_db)):
     note = await crud.get_note(db, note_id)
     if not note:
         raise HTTPException(status_code=404, detail="笔记不存在")
 
-    todos = _dedupe(payload.get("todos") or [], 20)
+    todos = _dedupe(payload.todos, 20)
     if not todos:
         raise HTTPException(status_code=400, detail="没有可写入的待办")
 
@@ -153,7 +214,44 @@ async def apply_todos(note_id: int, payload: Dict[str, Any] = Body(...), db: Asy
     return {"created": created, "count": len(created)}
 
 
-@router.post("/ai/regenerate/{note_id}")
-@router.post("/notes/{note_id}/ai/regenerate")
-async def regenerate_extract(note_id: int, db: AsyncSession = Depends(get_db)):
-    return await local_extract(note_id, db)
+
+
+@router.get("/notes/search/index")
+async def notes_search_index(q: str, limit: int = 20, db: AsyncSession = Depends(get_db)):
+    keyword = (q or "").strip()
+    if not keyword:
+        raise HTTPException(status_code=400, detail="搜索关键词不能为空")
+    keyword_lower = keyword.lower()
+
+    notes = await crud.get_notes(db, skip=0, limit=500)
+    scored: list[Dict[str, Any]] = []
+    for note in notes:
+        title = (note.title or "")
+        summary = (note.summary or "")
+        content = (note.content or "")
+
+        title_l = title.lower()
+        summary_l = summary.lower()
+        content_l = content.lower()
+
+        score = 0
+        score += title_l.count(keyword_lower) * 5
+        score += summary_l.count(keyword_lower) * 3
+        score += content_l.count(keyword_lower) * 1
+
+        tokens = _dedupe(extract_from_text(_note_text(note)).get("keywords"), 8)
+        if keyword_lower in [t.lower() for t in tokens]:
+            score += 4
+
+        if score > 0:
+            scored.append({
+                "id": note.id,
+                "title": title,
+                "summary": summary,
+                "score": score,
+                "keywords": tokens,
+                "updated_at": note.updated_at,
+            })
+
+    scored.sort(key=lambda x: x["score"], reverse=True)
+    return {"query": keyword, "count": len(scored), "items": scored[:max(1, min(limit, 100))]}

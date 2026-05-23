@@ -4,8 +4,14 @@ import promptAction from '@ohos.promptAction';
 import { Tag } from '../models/Tag';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo as fs } from '@kit.CoreFileKit';
+import { picker } from '@kit.CoreFileKit';
 import { cameraPicker, camera } from '@kit.CameraKit';
 import commonRequest from '@ohos.request';
+import { extractKeywordsNative } from '../common/native/KeywordNative';
+import util from '@ohos.util';
+import { common } from '@kit.AbilityKit';
+
+const IMPORT_ALLOWED_SUFFIXES: string[] = ['md', 'txt', 'word', 'doc', 'docx'];
 
 interface NoteCreateRequest {
   title: string;
@@ -67,12 +73,46 @@ interface TodoApplyPayload {
 }
 
 interface TodoApplyResponse {
-  id: number;
+  count?: number;
+}
+
+interface UploadConfigFile {
+  filename: string;
+  name: string;
+  uri: string;
+  type: string;
+}
+
+interface UploadRequestData {
+  name: string;
+  value: string;
+}
+
+interface UploadConfig {
+  url: string;
+  header: Record<string, string>;
+  method: string;
+  files: UploadConfigFile[];
+  data: UploadRequestData[];
+}
+
+interface UploadTaskState {
+  message?: string;
 }
 
 // 对话框结果类型
 interface DialogResult {
   index: number;
+}
+
+interface FileResult {
+  uri: string;
+  fileName: string;
+}
+
+interface ImportExportResult {
+  format: 'md' | 'txt' | 'word';
+  content: string;
 }
 
 // ==================== 上传图片 ====================
@@ -320,11 +360,159 @@ struct UrlInputDialog {
   }
 }
 
+@CustomDialog
+struct ImportDialog {
+  controller: CustomDialogController = new CustomDialogController({ builder: () => {} });
+  onConfirm: (result: ImportExportResult) => void = () => {};
+  onPickFile: (format: 'md' | 'txt' | 'word') => void = () => {};
+  @State format: 'md' | 'txt' | 'word' = 'md';
+  @State content: string = '';
+
+  build(): void {
+    Column({ space: 12 }) {
+      Text('导入笔记')
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor('#4A3933');
+
+      Row({ space: 8 }) {
+        this.FormatBtn('md')
+        this.FormatBtn('txt')
+        this.FormatBtn('word')
+      }
+      .width('100%');
+
+      Row({ space: 8 }) {
+        Button('选择文件导入')
+          .layoutWeight(1)
+          .backgroundColor('#EFEBE9')
+          .fontColor('#705C53')
+          .onClick(() => {
+            this.onPickFile(this.format);
+          })
+      }
+      .width('100%');
+
+      TextArea({ text: this.content, placeholder: '粘贴要导入的内容' })
+        .fontSize(14)
+        .fontColor('#4A3933')
+        .backgroundColor('#F9F8F4')
+        .borderRadius(10)
+        .padding(10)
+        .height(180)
+        .onChange((v: string) => this.content = v);
+
+      Row({ space: 10 }) {
+        Button('取消')
+          .layoutWeight(1)
+          .backgroundColor('#EFEBE9')
+          .fontColor('#705C53')
+          .onClick(() => this.controller.close())
+        Button('导入')
+          .layoutWeight(1)
+          .backgroundColor('#705C53')
+          .fontColor('#FFF')
+          .onClick(() => {
+            this.onConfirm({ format: this.format, content: this.content });
+            this.controller.close();
+          })
+      }
+      .width('100%')
+    }
+    .padding(16)
+    .backgroundColor(Color.White)
+    .borderRadius(16)
+    .width('92%');
+  }
+
+  @Builder
+  FormatBtn(v: 'md' | 'txt' | 'word'): void {
+    Text(v.toUpperCase())
+      .fontSize(12)
+      .fontColor(this.format === v ? '#FFFFFF' : '#705C53')
+      .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+      .backgroundColor(this.format === v ? '#705C53' : '#EFEBE9')
+      .borderRadius(10)
+      .onClick(() => this.format = v)
+  }
+}
+
+@CustomDialog
+struct ExportDialog {
+  controller: CustomDialogController = new CustomDialogController({ builder: () => {} });
+  defaultContent: string = '';
+  onConfirm: (result: ImportExportResult) => void = () => {};
+  @State format: 'md' | 'txt' | 'word' = 'md';
+  @State content: string = '';
+
+  aboutToAppear(): void {
+    this.content = this.defaultContent;
+  }
+
+  build(): void {
+    Column({ space: 12 }) {
+      Text('导出笔记')
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor('#4A3933');
+
+      Row({ space: 8 }) {
+        this.FormatBtn('md')
+        this.FormatBtn('txt')
+        this.FormatBtn('word')
+      }
+      .width('100%');
+
+      TextArea({ text: this.content, placeholder: '' })
+        .fontSize(14)
+        .fontColor('#4A3933')
+        .backgroundColor('#F9F8F4')
+        .borderRadius(10)
+        .padding(10)
+        .height(180)
+        .onChange((v: string) => this.content = v);
+
+      Row({ space: 10 }) {
+        Button('取消')
+          .layoutWeight(1)
+          .backgroundColor('#EFEBE9')
+          .fontColor('#705C53')
+          .onClick(() => this.controller.close())
+        Button('导出')
+          .layoutWeight(1)
+          .backgroundColor('#705C53')
+          .fontColor('#FFF')
+          .onClick(() => {
+            this.onConfirm({ format: this.format, content: this.content });
+            this.controller.close();
+          })
+      }
+      .width('100%')
+    }
+    .padding(16)
+    .backgroundColor(Color.White)
+    .borderRadius(16)
+    .width('92%');
+  }
+
+  @Builder
+  FormatBtn(v: 'md' | 'txt' | 'word'): void {
+    Text(v.toUpperCase())
+      .fontSize(12)
+      .fontColor(this.format === v ? '#FFFFFF' : '#705C53')
+      .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+      .backgroundColor(this.format === v ? '#705C53' : '#EFEBE9')
+      .borderRadius(10)
+      .onClick(() => this.format = v)
+  }
+}
+
 // ==================== AI 建议弹窗 ====================
 @CustomDialog
 struct AIDialog {
   controller: CustomDialogController = new CustomDialogController({ builder: () => {} });
   noteId: number = 0;
+  sourceText: string = '';
   onApplySummary: (summary: string) => void = () => {};
   onApplyTodos: (todos: string[]) => void = () => {};
 
@@ -332,6 +520,7 @@ struct AIDialog {
   @State localAIStatus: string = 'idle';
   @State cloudAIStatus: string = 'idle';
   @State aiResult: AIResult = { keywords: [], labels: [], todos: [], priority: 'normal', summary: '' };
+  @State keywordSource: 'native' | 'fallback' = 'fallback';
   @State aiError: string = '';
   @State cloudNotice: string = '';
   @StorageLink('themeBg') themeBg: string = '#F9F8F4';
@@ -383,6 +572,12 @@ struct AIDialog {
     this.localAIStatus = 'loading';
     this.cloudAIStatus = 'idle';
 
+    const nativeKeywords = extractKeywordsNative(this.sourceText, 8);
+    this.keywordSource = nativeKeywords.length > 0 ? 'native' : 'fallback';
+    if (nativeKeywords.length > 0) {
+      this.aiResult.keywords = this.normalizeList(nativeKeywords).slice(0, 8);
+    }
+
     try {
       const extractRes = await httpRequest<AIExtractResponse>(`/notes/${this.noteId}/ai/extract`, 'POST');
       if (extractRes && extractRes.result) {
@@ -390,13 +585,13 @@ struct AIDialog {
         const labels = this.normalizeList(extractRes.result.labels || []);
         const todos = this.normalizeList(extractRes.result.todos || []).slice(0, 8);
         this.aiResult = {
-          keywords: keywords,
+          keywords: this.aiResult.keywords.length > 0 ? this.aiResult.keywords : keywords,
           labels: labels,
           todos: todos,
           priority: extractRes.result.priority || 'normal',
           summary: this.aiResult.summary || ''
         };
-        this.localAIStatus = (keywords.length + labels.length + todos.length) > 0 ? 'success' : 'empty';
+        this.localAIStatus = (this.aiResult.keywords.length + labels.length + todos.length) > 0 ? 'success' : 'empty';
       } else {
         this.localAIStatus = 'empty';
       }
@@ -558,6 +753,7 @@ struct AIDialog {
                 this.StatusBadge(this.priorityText(this.aiResult.priority), '#F3EBDD', '#8A5A32')
                 this.StatusBadge(`关键词 ${this.aiResult.keywords.length}`, '#F0EDF8', '#6B5A9E')
                 this.StatusBadge(`待办 ${this.aiResult.todos.length}`, '#EEF5EA', '#5A7D45')
+                this.StatusBadge(`关键词来源 ${this.keywordSource === 'native' ? 'Native' : 'Fallback'}`, '#EFEFEF', '#666666')
               }
               .width('100%')
 
@@ -844,6 +1040,8 @@ struct NoteEdit {
   private richController: RichEditorController = new RichEditorController();
   private plainContent: string = '';
   private aiDialogController: CustomDialogController | null = null;
+  private importDialogController: CustomDialogController | null = null;
+  private exportDialogController: CustomDialogController | null = null;
 
   private themeCoverResource(): Resource {
     if (this.view_type === 'meadow') return $r('app.media.note_bg_meadow');
@@ -921,16 +1119,39 @@ struct NoteEdit {
   }
 
   insertHeading(level: number): void {
-    const sizes: number[] = [26, 20, 17];
+    const sizes: number[] = [28, 24, 20];
+    const marks: string[] = ['# ', '## ', '### '];
     const fontSize = sizes[level - 1];
-    this.richController.addTextSpan('\n', {
-      style: { fontSize: 16, fontColor: '#4A3933' }
+    const mark = marks[level - 1];
+    this.richController.addTextSpan(`\n${mark}`, {
+      style: { fontSize: fontSize, fontColor: '#4A3933', fontWeight: FontWeight.Bold }
     });
     this.richController.setTypingStyle({
       fontSize: fontSize,
       fontColor: '#4A3933',
       fontWeight: FontWeight.Bold
     });
+  }
+
+  insertBulletList(): void {
+    this.richController.addTextSpan('\n- ', {
+      style: { fontSize: 16, fontColor: '#4A3933' }
+    });
+    this.richController.setTypingStyle({ fontSize: 16, fontColor: '#4A3933', fontWeight: FontWeight.Normal });
+  }
+
+  insertChecklist(): void {
+    this.richController.addTextSpan('\n- [ ] ', {
+      style: { fontSize: 16, fontColor: '#4A3933' }
+    });
+    this.richController.setTypingStyle({ fontSize: 16, fontColor: '#4A3933', fontWeight: FontWeight.Normal });
+  }
+
+  insertCodeBlock(): void {
+    this.richController.addTextSpan('\n```\ncode\n```\n', {
+      style: { fontSize: 14, fontColor: '#2F6FA3' }
+    });
+    this.richController.setTypingStyle({ fontSize: 14, fontColor: '#2F6FA3', fontWeight: FontWeight.Normal });
   }
 
   insertNote(): void {
@@ -1003,6 +1224,195 @@ struct NoteEdit {
       fontWeight: FontWeight.Normal,
       fontStyle: FontStyle.Normal
     });
+  }
+
+  private getSuffix(name: string): string {
+    const normalized = (name || '').trim().toLowerCase();
+    const idx = normalized.lastIndexOf('.');
+    if (idx < 0 || idx === normalized.length - 1) {
+      return '';
+    }
+    return normalized.substring(idx + 1);
+  }
+
+  private toFormatBySuffix(suffix: string): 'md' | 'txt' | 'word' {
+    if (suffix === 'md') {
+      return 'md';
+    }
+    if (suffix === 'txt') {
+      return 'txt';
+    }
+    return 'word';
+  }
+
+  async importFromFile(expectedFormat: 'md' | 'txt' | 'word'): Promise<void> {
+    try {
+      const documentPicker = new picker.DocumentViewPicker();
+      const result: string[] = await documentPicker.select({
+        maxSelectNumber: 1,
+        fileSuffixFilters: ['.md', '.txt', '.word', '.doc', '.docx']
+      });
+      if (!result || result.length === 0 || !result[0]) {
+        promptAction.showToast({ message: '未选择文件' });
+        return;
+      }
+
+      const fileUri: string = result[0];
+      const normalizedUri = fileUri.toLowerCase();
+      let suffix = '';
+      for (let i = 0; i < IMPORT_ALLOWED_SUFFIXES.length; i++) {
+        const currentSuffix = IMPORT_ALLOWED_SUFFIXES[i];
+        if (normalizedUri.endsWith('.' + currentSuffix)) {
+          suffix = currentSuffix;
+          break;
+        }
+      }
+      if (!suffix) {
+        promptAction.showToast({ message: '文件后缀不支持，仅支持 md/txt/word/doc/docx' });
+        return;
+      }
+
+      const fd = fs.openSync(fileUri, fs.OpenMode.READ_ONLY);
+      const stat = fs.statSync(fd.fd);
+      if (!stat || stat.size <= 0) {
+        fs.closeSync(fd.fd);
+        promptAction.showToast({ message: '导入失败：文件为空' });
+        return;
+      }
+      const buf = new ArrayBuffer(stat.size);
+      fs.readSync(fd.fd, buf);
+      fs.closeSync(fd.fd);
+
+      const decoder = new util.TextDecoder('utf-8', { ignoreBOM: true });
+      const content = decoder.decodeWithStream(new Uint8Array(buf), { stream: false });
+      if (!content || !content.trim()) {
+        promptAction.showToast({ message: '导入失败：文件内容为空或不可读' });
+        return;
+      }
+
+      const detectedFormat = this.toFormatBySuffix(suffix);
+      if (expectedFormat !== detectedFormat) {
+        promptAction.showToast({ message: `格式不匹配：当前选择 ${expectedFormat.toUpperCase()}，文件是 ${detectedFormat.toUpperCase()}` });
+        return;
+      }
+
+      this.applyImportedContent({ format: detectedFormat, content: content });
+      promptAction.showToast({ message: `已从文件导入 ${detectedFormat.toUpperCase()} 内容` });
+    } catch (e) {
+      const error = e as Error;
+      console.error('文件导入失败', error.message);
+      promptAction.showToast({ message: '导入失败，请检查文件权限或内容格式' });
+    }
+  }
+
+  buildExportText(format: 'md' | 'txt' | 'word'): string {
+    const title = this.title.trim();
+    const summary = this.summary.trim();
+    const body = this.extractPlainText().trim();
+    if (format === 'md') {
+      return `# ${title || '未命名笔记'}\n\n${summary ? `> ${summary}\n\n` : ''}${body}`;
+    }
+    if (format === 'word') {
+      return `${title || '未命名笔记'}\n\n${summary ? `摘要：${summary}\n\n` : ''}${body}`;
+    }
+    return `${title || '未命名笔记'}\n\n${summary ? `摘要：${summary}\n\n` : ''}${body}`;
+  }
+
+  private sanitizeFileName(name: string): string {
+    const base = (name || '未命名笔记').trim();
+    const cleaned = base.replace(/[\\/:*?"<>|\s]+/g, '_');
+    return cleaned.length > 0 ? cleaned : '未命名笔记';
+  }
+
+  private buildExportFilePath(format: 'md' | 'txt' | 'word'): string {
+    const ext = format === 'md' ? 'md' : (format === 'txt' ? 'txt' : 'word');
+    const fileName = `${this.sanitizeFileName(this.title)}_${Date.now()}.${ext}`;
+    const ctx = getContext(this) as common.UIAbilityContext;
+    return `${ctx.cacheDir}/${fileName}`;
+  }
+
+  async exportToDownload(result: ImportExportResult): Promise<void> {
+    try {
+      const output = (result.content || '').trim();
+      if (!output) {
+        promptAction.showToast({ message: '导出失败：内容为空' });
+        return;
+      }
+      const targetPath = this.buildExportFilePath(result.format);
+      const encoder = new util.TextEncoder();
+      const bytes = encoder.encodeInto(output);
+      const file = fs.openSync(targetPath, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
+      fs.writeSync(file.fd, bytes.buffer as ArrayBuffer);
+      fs.closeSync(file.fd);
+      promptAction.showToast({ message: `已导出到应用缓存目录 ${targetPath}` });
+    } catch (e) {
+      const error = e as Error;
+      console.error('导出文件失败', error.message);
+      promptAction.showToast({ message: `导出失败：${error.message || '请检查应用存储状态'}` });
+    }
+  }
+
+  applyImportedContent(result: ImportExportResult): void {
+    const raw = result.content || '';
+    if (!raw.trim()) {
+      promptAction.showToast({ message: '导入内容为空' });
+      return;
+    }
+    const lines = raw.split('\n');
+    if (result.format === 'md' && lines.length > 0 && lines[0].startsWith('# ')) {
+      this.title = lines[0].replace('# ', '').trim();
+      this.summary = '';
+      const body = lines.slice(1).join('\n').replace(/^\s+/, '');
+      this.richController.deleteSpans();
+      this.richController.addTextSpan(body, { style: { fontSize: 16, fontColor: '#4A3933' } });
+      return;
+    }
+    if (!this.title.trim()) {
+      this.title = lines[0].trim();
+    }
+    this.richController.deleteSpans();
+    this.richController.addTextSpan(raw, { style: { fontSize: 16, fontColor: '#4A3933' } });
+  }
+
+  openImportDialog(): void {
+    if (this.importDialogController) {
+      this.importDialogController.close();
+    }
+    this.importDialogController = new CustomDialogController({
+      builder: ImportDialog({
+        controller: this.importDialogController ?? undefined,
+        onConfirm: (result: ImportExportResult) => {
+          this.applyImportedContent(result);
+          promptAction.showToast({ message: `已导入 ${result.format.toUpperCase()} 内容` });
+        },
+        onPickFile: (format: 'md' | 'txt' | 'word') => {
+          this.importFromFile(format);
+        }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      customStyle: true
+    });
+    this.importDialogController.open();
+  }
+
+  openExportDialog(): void {
+    if (this.exportDialogController) {
+      this.exportDialogController.close();
+    }
+    this.exportDialogController = new CustomDialogController({
+      builder: ExportDialog({
+        controller: this.exportDialogController ?? undefined,
+        defaultContent: this.buildExportText('md'),
+        onConfirm: (result: ImportExportResult) => {
+          this.exportToDownload(result);
+        }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center,
+      customStyle: true
+    });
+    this.exportDialogController.open();
   }
 
   openTemplateDialog(): void {
@@ -1288,6 +1698,9 @@ struct NoteEdit {
           this.ToolBtn('H1', false, () => this.insertHeading(1), false);
           this.ToolBtn('H2', false, () => this.insertHeading(2), false);
           this.ToolBtn('H3', false, () => this.insertHeading(3), false);
+          this.ToolBtn('•', false, () => this.insertBulletList(), false);
+          this.ToolBtn('☑', false, () => this.insertChecklist(), false);
+          this.ToolBtn('{ }', false, () => this.insertCodeBlock(), false);
           this.ToolBtn('⚠️', false, () => this.insertNote(), false);
           this.ToolBtn('❝', false, () => this.insertQuote(), false);
           this.ToolBtn('🕐', false, () => this.insertTime(), false);
@@ -1378,6 +1791,30 @@ struct NoteEdit {
         .layoutWeight(1)
         .padding({ top: 8, bottom: 8 })
         .onClick(() => this.validateAndSave());
+
+        Column({ space: 4 }) {
+          SymbolGlyph($r('sys.symbol.square_and_arrow_down'))
+            .fontSize(20)
+            .fontColor(['#705C53']);
+          Text('导入')
+            .fontSize(10)
+            .fontColor('#A89982');
+        }
+        .layoutWeight(1)
+        .padding({ top: 8, bottom: 8 })
+        .onClick(() => this.openImportDialog());
+
+        Column({ space: 4 }) {
+          Text('⇪')
+            .fontSize(20)
+            .fontColor('#705C53');
+          Text('导出')
+            .fontSize(10)
+            .fontColor('#A89982');
+        }
+        .layoutWeight(1)
+        .padding({ top: 8, bottom: 8 })
+        .onClick(() => this.openExportDialog());
 
         Column({ space: 4 }) {
           Text('🤖')
@@ -1527,6 +1964,7 @@ struct NoteEdit {
     this.aiDialogController = new CustomDialogController({
       builder: AIDialog({
         noteId: this.noteId,
+        sourceText: this.extractPlainText(),
         onApplySummary: (summary: string) => {
           this.summary = summary;
           promptAction.showToast({ message: '摘要已写回，可继续编辑后保存' });
@@ -1613,7 +2051,7 @@ struct NoteEdit {
   }
 
   // ── 图片上传相关 ──
-  private currentUploadTask: commonRequest.UploadTask | null = null;
+  private currentUploadTask: Object | null = null;
 
   async uploadToBackend(internalUri: string): Promise<void> {
     const SERVER_URL = "http://10.0.2.2:8000";
@@ -1628,16 +2066,16 @@ struct NoteEdit {
           uri: internalUri,
           type: 'image/jpeg'
         }],
-        data: []
+        data: [] as commonRequest.RequestData[]
       };
 
       this.currentUploadTask = await commonRequest.uploadFile(getContext(this), uploadConfig);
 
-      this.currentUploadTask.on('progress', (uploadedSize: number, totalSize: number) => {
+      (this.currentUploadTask as Record<string, (event: string, cb: Function) => void>).on('progress', (uploadedSize: number, totalSize: number) => {
         console.info(`上传中: ${uploadedSize}/${totalSize}`);
       });
 
-      this.currentUploadTask.on('headerReceive', (header: object) => {
+      (this.currentUploadTask as Record<string, (event: string, cb: Function) => void>).on('headerReceive', (header: object) => {
         const headers = header as Record<string, string>;
         console.info('接收到响应头:', JSON.stringify(headers));
         try {
@@ -1656,7 +2094,7 @@ struct NoteEdit {
         }
       });
 
-      this.currentUploadTask.on('complete', (taskStates: Array<commonRequest.TaskState>) => {
+      (this.currentUploadTask as Record<string, (event: string, cb: Function) => void>).on('complete', (taskStates: UploadTaskState[]) => {
         console.info('任务完成状态:', JSON.stringify(taskStates));
         if (taskStates.length > 0 && taskStates[0].message) {
           try {
@@ -1673,7 +2111,7 @@ struct NoteEdit {
         }
       });
 
-      this.currentUploadTask.on('fail', (taskStates: Array<commonRequest.TaskState>) => {
+      (this.currentUploadTask as Record<string, (event: string, cb: Function) => void>).on('fail', (taskStates: UploadTaskState[]) => {
         console.error('上传彻底失败:', JSON.stringify(taskStates));
         promptAction.showToast({ message: '上传失败' });
       });
