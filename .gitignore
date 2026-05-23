@@ -12,6 +12,7 @@ local.properties
 # VSCode
 .vscode/
 *.code-workspace
+.claude
 
 # 其他编辑器
 *.swp
