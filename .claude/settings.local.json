@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(python -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8001)",
-      "Bash(\"D:/DevEco Studio/tools/node/node.exe\" \"D:/DevEco Studio/tools/hvigor/bin/hvigorw.js\" --mode module -p module=entry@default -p product=default -p requiredDeviceType=tablet assembleHap --analyze=normal --parallel --incremental --daemon)",
-      "WebSearch"
-    ]
-  }
-}
