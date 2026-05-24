@@ -7,7 +7,7 @@ import { fileIo as fs } from '@kit.CoreFileKit';
 import { picker } from '@kit.CoreFileKit';
 import { cameraPicker, camera } from '@kit.CameraKit';
 import commonRequest from '@ohos.request';
-import { extractKeywordsNative } from '../common/native/KeywordNative';
+import { extractKeywordsNative, parseMarkdownNative, exportMarkdownNative, renderMarkdownToPlainTextNative, hasMarkdownNative, type MarkdownDocument, type MarkdownBlock } from '../common/native/MarkdownNative';
 import util from '@ohos.util';
 import { common } from '@kit.AbilityKit';
 
@@ -596,9 +596,9 @@ struct AIDialog {
         this.localAIStatus = 'empty';
       }
     } catch (e) {
-      const error = e as Error;
+      const errorMsg = `${e}`;
       this.localAIStatus = 'failed';
-      this.aiError = '端侧整理失败，请检查模型或本地服务状态。' + (error.message ? ` ${error.message}` : '');
+      this.aiError = '端侧整理失败，请检查模型或本地服务状态。' + (errorMsg ? ` ${errorMsg}` : '');
     }
 
     this.cloudAIStatus = 'loading';
@@ -618,8 +618,8 @@ struct AIDialog {
         this.cloudNotice = '云端模型返回为空，可手动填写摘要，或稍后重新生成。';
       }
     } catch (e) {
-      const error = e as Error;
-      const msg = error.message || '';
+      const errorMsg = `${e}`;
+      const msg = errorMsg || '';
       this.cloudAIStatus = msg.indexOf('timeout') >= 0 || msg.indexOf('Timeout') >= 0 || msg.indexOf('timed out') >= 0 ? 'timeout' : 'failed';
       this.cloudNotice = this.cloudAIStatus === 'timeout'
         ? '云端总结超时，端侧关键词和待办仍可使用。'
@@ -673,6 +673,7 @@ struct AIDialog {
       .backgroundColor('#FBF8F3')
       .borderRadius(12);
   }
+
 
   build(): void {
     Column() {
@@ -1029,6 +1030,8 @@ struct NoteEdit {
   @State currentColor: string = '#4A3933';
   @State aiResult: AIResult = { keywords: [], labels: [], todos: [], priority: 'normal', summary: '' };
   @State aiError: string = '';
+
+  @State isPreviewMode: boolean = false;
   @StorageLink('themeBg') themeBg: string = '#F9F8F4';
   @StorageLink('themePrimary') themePrimary: string = '#6F7F4F';
   @StorageLink('themeText') themeText: string = '#3F382F';
@@ -1086,8 +1089,8 @@ struct NoteEdit {
       }
       return text;
     } catch (e) {
-      const error = e as Error;
-      console.error('提取纯文本失败', error.message);
+      const errorMsg = `${e}`;
+      console.error('提取纯文本失败', errorMsg);
       return this.plainContent;
     }
   }
@@ -1299,8 +1302,8 @@ struct NoteEdit {
       this.applyImportedContent({ format: detectedFormat, content: content });
       promptAction.showToast({ message: `已从文件导入 ${detectedFormat.toUpperCase()} 内容` });
     } catch (e) {
-      const error = e as Error;
-      console.error('文件导入失败', error.message);
+      const errorMsg = `${e}`;
+      console.error('文件导入失败', errorMsg);
       promptAction.showToast({ message: '导入失败，请检查文件权限或内容格式' });
     }
   }
@@ -1309,13 +1312,14 @@ struct NoteEdit {
     const title = this.title.trim();
     const summary = this.summary.trim();
     const body = this.extractPlainText().trim();
+
     if (format === 'md') {
-      return `# ${title || '未命名笔记'}\n\n${summary ? `> ${summary}\n\n` : ''}${body}`;
+      return exportMarkdownNative(title || '未命名笔记', summary, body);
     }
     if (format === 'word') {
-      return `${title || '未命名笔记'}\n\n${summary ? `摘要：${summary}\n\n` : ''}${body}`;
+      return `${title || '未命名笔记'}\n\n${summary ? `摘要：${summary}\n\n` : ''}${renderMarkdownToPlainTextNative(body)}`;
     }
-    return `${title || '未命名笔记'}\n\n${summary ? `摘要：${summary}\n\n` : ''}${body}`;
+    return `${title || '未命名笔记'}\n\n${summary ? `摘要：${summary}\n\n` : ''}${renderMarkdownToPlainTextNative(body)}`;
   }
 
   private sanitizeFileName(name: string): string {
@@ -1346,9 +1350,78 @@ struct NoteEdit {
       fs.closeSync(file.fd);
       promptAction.showToast({ message: `已导出到应用缓存目录 ${targetPath}` });
     } catch (e) {
-      const error = e as Error;
-      console.error('导出文件失败', error.message);
-      promptAction.showToast({ message: `导出失败：${error.message || '请检查应用存储状态'}` });
+      const errorMsg = `${e}`;
+      console.error('导出文件失败', errorMsg);
+      promptAction.showToast({ message: `导出失败：${errorMsg || '请检查应用存储状态'}` });
+    }
+  }
+
+  private appendMarkdownBlockToEditor(block: MarkdownBlock): void {
+    if (block.type === 'heading') {
+      const level = block.level ?? 1;
+      const size = level === 1 ? 28 : (level === 2 ? 24 : 20);
+      this.richController.addTextSpan(`${block.text}\n`, {
+        style: { fontSize: size, fontColor: '#4A3933', fontWeight: FontWeight.Bold }
+      });
+      return;
+    }
+
+    if (block.type === 'quote') {
+      this.richController.addTextSpan(`❝ ${block.text}\n`, {
+        style: { fontSize: 15, fontColor: '#A89982', fontStyle: FontStyle.Italic }
+      });
+      return;
+    }
+
+    if (block.type === 'bullet_item') {
+      this.richController.addTextSpan(`• ${block.text}\n`, {
+        style: { fontSize: 16, fontColor: '#4A3933' }
+      });
+      return;
+    }
+
+    if (block.type === 'ordered_item') {
+      this.richController.addTextSpan(`1. ${block.text}\n`, {
+        style: { fontSize: 16, fontColor: '#4A3933' }
+      });
+      return;
+    }
+
+    if (block.type === 'checklist_item') {
+      this.richController.addTextSpan(`${block.checked ? '☑' : '☐'} ${block.text}\n`, {
+        style: { fontSize: 16, fontColor: '#4A3933' }
+      });
+      return;
+    }
+
+    if (block.type === 'code_block') {
+      const codeText = block.language ? `${block.language}\n${block.text}` : block.text;
+      this.richController.addTextSpan(`${codeText}\n`, {
+        style: { fontSize: 14, fontColor: '#2F6FA3' }
+      });
+      return;
+    }
+
+    if (block.type === 'divider') {
+      this.richController.addTextSpan('────────────────────\n', {
+        style: { fontSize: 14, fontColor: '#D2C4B0' }
+      });
+      return;
+    }
+
+    this.richController.addTextSpan(`${block.text}\n`, {
+      style: { fontSize: 16, fontColor: '#4A3933' }
+    });
+  }
+
+  private applyMarkdownDocumentToEditor(doc: MarkdownDocument, raw: string): void {
+    this.richController.deleteSpans();
+    if (!doc.blocks || doc.blocks.length === 0) {
+      this.richController.addTextSpan(raw, { style: { fontSize: 16, fontColor: '#4A3933' } });
+      return;
+    }
+    for (let i = 0; i < doc.blocks.length; i++) {
+      this.appendMarkdownBlockToEditor(doc.blocks[i]);
     }
   }
 
@@ -1358,15 +1431,28 @@ struct NoteEdit {
       promptAction.showToast({ message: '导入内容为空' });
       return;
     }
-    const lines = raw.split('\n');
-    if (result.format === 'md' && lines.length > 0 && lines[0].startsWith('# ')) {
-      this.title = lines[0].replace('# ', '').trim();
-      this.summary = '';
-      const body = lines.slice(1).join('\n').replace(/^\s+/, '');
-      this.richController.deleteSpans();
-      this.richController.addTextSpan(body, { style: { fontSize: 16, fontColor: '#4A3933' } });
+
+    if (result.format === 'md') {
+      const doc = parseMarkdownNative(raw);
+
+      if (doc.extractedTitle && doc.extractedTitle.trim()) {
+        this.title = doc.extractedTitle.trim();
+      } else {
+        const lines = raw.split('\n');
+        if (!this.title.trim() && lines.length > 0) {
+          this.title = lines[0].trim();
+        }
+      }
+
+      if (doc.extractedSummary && doc.extractedSummary.trim()) {
+        this.summary = doc.extractedSummary.trim();
+      }
+
+      this.applyMarkdownDocumentToEditor(doc, raw);
       return;
     }
+
+    const lines = raw.split('\n');
     if (!this.title.trim()) {
       this.title = lines[0].trim();
     }
@@ -1481,10 +1567,94 @@ struct NoteEdit {
       this.view_type = key;
     })
   }
+  @Builder
+  MarkdownPreview(src: string): void {
+    Scroll() {
+      Column({ space: 10 }) {
+        ForEach(parseMarkdownNative(src).blocks, (b: MarkdownBlock) => {
+          if (b.type === 'heading') {
+            Text(b.text)
+              .fontSize(((b.level ?? 1) === 1) ? 24 : (((b.level ?? 1) === 2) ? 20 : 18))
+              .fontWeight(FontWeight.Bold)
+              .fontColor('#3F382F')
+              .padding({ top: 8, bottom: 4 });
+          } else if (b.type === 'paragraph') {
+            Text(b.text)
+              .fontSize(15)
+              .fontColor('#3F382F')
+              .lineHeight(22);
+          } else if (b.type === 'quote') {
+            Row() {
+              Column().width(3).height('100%').backgroundColor('#B7A887').borderRadius(2);
+              Text(b.text)
+                .fontSize(14)
+                .fontColor('#B7A887')
+                .lineHeight(20)
+                .padding({ left: 10, top: 8, bottom: 8, right: 10 });
+            }
+            .width('100%')
+            .backgroundColor('#F9F8F4')
+            .borderRadius(12);
+          } else if (b.type === 'bullet_item') {
+            Row({ space: 8 }) {
+              Text('•').fontSize(16).fontColor('#B7A887');
+              Text(b.text).fontSize(15).fontColor('#3F382F').layoutWeight(1);
+            }
+            .width('100%');
+          } else if (b.type === 'ordered_item') {
+            Row({ space: 8 }) {
+              Text('1.').fontSize(14).fontColor('#B7A887');
+              Text(b.text).fontSize(15).fontColor('#3F382F').layoutWeight(1);
+            }
+            .width('100%');
+          } else if (b.type === 'checklist_item') {
+            Row({ space: 8 }) {
+              Text((b.checked ? '☑' : '☐'))
+                .fontSize(16)
+                .fontColor(b.checked ? '#6F7F4F' : '#B7A887');
+              Text(b.text)
+                .fontSize(15)
+                .fontColor('#3F382F')
+                .decoration({ type: b.checked ? TextDecorationType.LineThrough : TextDecorationType.None })
+                .layoutWeight(1);
+            }
+            .width('100%');
+          } else if (b.type === 'code_block') {
+            Column() {
+              if (b.language) {
+                Text(b.language)
+                  .fontSize(11)
+                  .fontColor('#A89982')
+                  .padding({ bottom: 6 });
+              }
+              Text(b.text)
+                .fontSize(13)
+                .fontColor('#2F6FA3')
+                .fontFamily('monospace')
+                .lineHeight(18);
+            }
+            .width('100%')
+            .padding(12)
+            .backgroundColor('#EEF3E5')
+            .borderRadius(12);
+          } else if (b.type === 'divider') {
+            Divider().color('#EFEBE9').strokeWidth(1);
+          }
+        }, (b: MarkdownBlock) => `${b.type}_${b.text}_${b.level ?? ''}`);
+      }
+      .width('100%')
+      .padding({ left: 24, right: 24, top: 12, bottom: 12 });
+    }
+    .layoutWeight(1)
+    .width('100%');
+  }
+
+  togglePreview(): void {
+    this.isPreviewMode = !this.isPreviewMode;
+  }
 
   build(): void {
     Column() {
-      // 顶部导航栏
       Row() {
         SymbolGlyph($r('sys.symbol.chevron_left'))
           .fontSize(24)
@@ -1633,23 +1803,53 @@ struct NoteEdit {
 
       Divider().color('#EFEBE9').strokeWidth(1).margin({ left: 24, right: 24, top: 8, bottom: 0 });
 
-      // RichEditor 正文
-      RichEditor({ controller: this.richController })
-        .layoutWeight(1)
-        .width('100%')
-        .padding({ left: 24, right: 24, top: 12, bottom: 12 })
-        .backgroundColor(Color.Transparent)
-        .placeholder('在此输入你的想法，尽情记录灵感...', {
-          font: { size: 16 },
-          fontColor: '#D2C4B0'
-        })
-        .onReady(() => {
-          this.richController.setTypingStyle({
-            fontSize: 16,
-            fontColor: '#4A3933',
-            fontWeight: FontWeight.Normal
+      Row({ space: 8 }) {
+        Text('模式')
+          .fontSize(11)
+          .fontColor(this.themeSecondary);
+
+        Text(this.isPreviewMode ? '预览' : '编辑')
+          .fontSize(11)
+          .fontColor(this.themePrimary)
+          .backgroundColor('#EFEBE9')
+          .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+          .borderRadius(12)
+          .onClick(() => this.togglePreview());
+
+        if (!hasMarkdownNative()) {
+          Text('Native 未启用')
+            .fontSize(10)
+            .fontColor('#C0392B')
+            .backgroundColor('#FDEDEC')
+            .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+            .borderRadius(10);
+        }
+      }
+      .width('100%')
+      .padding({ left: 24, right: 24, top: 10, bottom: 6 });
+
+      if (this.isPreviewMode) {
+        // Markdown 预览
+        this.MarkdownPreview(this.extractPlainText());
+      } else {
+        // RichEditor 正文
+        RichEditor({ controller: this.richController })
+          .layoutWeight(1)
+          .width('100%')
+          .padding({ left: 24, right: 24, top: 12, bottom: 12 })
+          .backgroundColor(Color.Transparent)
+          .placeholder('在此输入你的想法，尽情记录灵感...', {
+            font: { size: 16 },
+            fontColor: '#D2C4B0'
+          })
+          .onReady(() => {
+            this.richController.setTypingStyle({
+              fontSize: 16,
+              fontColor: '#4A3933',
+              fontWeight: FontWeight.Normal
+            });
           });
-        });
+      }
 
       // 图片预览区域
       Column() {
@@ -1897,8 +2097,8 @@ struct NoteEdit {
         });
       }
     } catch (e) {
-      const error = e as Error;
-      console.error('加载笔记失败', error.message);
+      const errorMsg = `${e}`;
+      console.error('加载笔记失败', errorMsg);
       promptAction.showToast({ message: '加载笔记失败' });
     }
   }
@@ -1908,8 +2108,8 @@ struct NoteEdit {
       const data = await httpRequest<Tag[]>('/tags/', 'GET');
       this.tags = data ?? [];
     } catch (e) {
-      const error = e as Error;
-      console.error('加载标签失败', error.message);
+      const errorMsg = `${e}`;
+      console.error('加载标签失败', errorMsg);
     }
   }
 
@@ -1918,8 +2118,8 @@ struct NoteEdit {
       const data = await httpRequest<NoteTemplate[]>('/templates/', 'GET');
       this.templates = data ?? [];
     } catch (e) {
-      const error = e as Error;
-      console.error('获取模板失败', error.message);
+      const errorMsg = `${e}`;
+      console.error('获取模板失败', errorMsg);
     }
   }
 
@@ -1943,8 +2143,8 @@ struct NoteEdit {
       promptAction.showToast({ message: '灵感已妥善保管 ✓' });
       router.back();
     } catch (e) {
-      const error = e as Error;
-      console.error('保存失败', error.message);
+      const errorMsg = `${e}`;
+      console.error('保存失败', errorMsg);
       promptAction.showToast({ message: '保存失败，请重试' });
     } finally {
       this.isSaving = false;
@@ -1995,8 +2195,8 @@ struct NoteEdit {
         promptAction.showToast({ message: '创建待办失败' });
       }
     } catch (e) {
-      const error = e as Error;
-      console.error('applyTodos failed', error.message);
+      const errorMsg = `${e}`;
+      console.error('applyTodos failed', errorMsg);
       promptAction.showToast({ message: '写入待办失败' });
     }
   }
@@ -2024,8 +2224,8 @@ struct NoteEdit {
         promptAction.showToast({ message: '创建待办失败' });
       }
     } catch (e) {
-      const error = e as Error;
-      console.error('applyTodos failed', error.message);
+      const errorMsg = `${e}`;
+      console.error('applyTodos failed', errorMsg);
       promptAction.showToast({ message: '写入待办失败' });
     }
   }
@@ -2071,11 +2271,11 @@ struct NoteEdit {
 
       this.currentUploadTask = await commonRequest.uploadFile(getContext(this), uploadConfig);
 
-      (this.currentUploadTask as Record<string, (event: string, cb: Function) => void>).on('progress', (uploadedSize: number, totalSize: number) => {
+      (this.currentUploadTask as Record<string, (event: string, cb: (uploadedSize: number, totalSize: number) => void) => void>).on('progress', (uploadedSize: number, totalSize: number) => {
         console.info(`上传中: ${uploadedSize}/${totalSize}`);
       });
 
-      (this.currentUploadTask as Record<string, (event: string, cb: Function) => void>).on('headerReceive', (header: object) => {
+      (this.currentUploadTask as Record<string, (event: string, cb: (arg: object) => void) => void>).on('headerReceive', (header: object) => {
         const headers = header as Record<string, string>;
         console.info('接收到响应头:', JSON.stringify(headers));
         try {
@@ -2089,12 +2289,12 @@ struct NoteEdit {
             promptAction.showToast({ message: '图片上传成功 ✓' });
           }
         } catch (e) {
-          const error = e as Error;
-          console.error('headerReceive 解析失败:', error.message);
+          const errorMsg = `${e}`;
+          console.error('headerReceive 解析失败:', errorMsg);
         }
       });
 
-      (this.currentUploadTask as Record<string, (event: string, cb: Function) => void>).on('complete', (taskStates: UploadTaskState[]) => {
+      (this.currentUploadTask as Record<string, (event: string, cb: (arg: UploadTaskState[]) => void) => void>).on('complete', (taskStates: UploadTaskState[]) => {
         console.info('任务完成状态:', JSON.stringify(taskStates));
         if (taskStates.length > 0 && taskStates[0].message) {
           try {
@@ -2104,8 +2304,8 @@ struct NoteEdit {
             this.imagePaths = [...this.imagePaths, fullImageUrl];
             promptAction.showToast({ message: '图片上传成功 ✓' });
           } catch (e) {
-            const error = e as Error;
-            console.error('解析失败:', error.message);
+            const errorMsg = `${e}`;
+            console.error('解析失败:', errorMsg);
             promptAction.showToast({ message: '解析响应失败' });
           }
         }
@@ -2116,8 +2316,8 @@ struct NoteEdit {
         promptAction.showToast({ message: '上传失败' });
       });
     } catch (err) {
-      const error = err as Error;
-      console.error('创建上传任务崩溃:', error.message);
+      const errorMsg = `${err}`;
+      console.error('创建上传任务崩溃:', errorMsg);
     }
   }
 
@@ -2135,8 +2335,8 @@ struct NoteEdit {
       fs.closeSync(destFile.fd);
       return `internal://cache/${fileName}`;
     } catch (e) {
-      const error = e as Error;
-      console.error('文件处理失败:', error.message);
+      const errorMsg = `${e}`;
+      console.error('文件处理失败:', errorMsg);
       throw new Error('文件拷贝失败');
     }
   }
@@ -2184,8 +2384,8 @@ struct NoteEdit {
       this.imagePaths = [...this.imagePaths, url];
       promptAction.showToast({ message: '图片 URL 已添加 ✓' });
     } catch (err) {
-      const error = err as Error;
-      console.error('处理图片 URL 失败', error.message);
+      const errorMsg = `${err}`;
+      console.error('处理图片 URL 失败', errorMsg);
       promptAction.showToast({ message: '图片处理失败' });
     }
   }

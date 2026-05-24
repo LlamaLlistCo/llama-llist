@@ -113,6 +113,22 @@
 **对应文件**：
 - `frontend/LlamaLlistApp/entry/src/main/ets/pages/NoteEdit.ets`
 
+### 4) Markdown Native 解析引擎（C++）
+
+- 已实现 C++ 侧 Markdown 解析引擎，并通过 NAPI 暴露三类能力：
+  - `parseMarkdown`：将 Markdown 解析为结构化块（标题、段落、引用、列表、待办、代码块、分割线）
+  - `renderMarkdownToPlainText`：将 Markdown 渲染为纯文本
+  - `exportMarkdown`：按结构化文档生成规范 Markdown
+- 编辑页已接入解析结果回填：导入 `md` 文件时不再仅原样写入文本，而是按解析块回填到编辑器，标题/摘要同步提取并回填。
+- 预览模式基于 Native 解析块进行结构化渲染。
+
+**对应文件**：
+- `frontend/LlamaLlistApp/entry/src/main/cpp/markdown_engine.cpp`
+- `frontend/LlamaLlistApp/entry/src/main/cpp/markdown_engine.h`
+- `frontend/LlamaLlistApp/entry/src/main/cpp/keyword_napi.cpp`
+- `frontend/LlamaLlistApp/entry/src/main/ets/common/native/MarkdownNative.ets`
+- `frontend/LlamaLlistApp/entry/src/main/ets/pages/NoteEdit.ets`
+
 ---
 
 ## 五、HapTest 测试（作业第4部分）
