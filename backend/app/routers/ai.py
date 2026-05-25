@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Body
+from fastapi import APIRouter, Depends, HTTPException, Body, Request
 from pydantic import BaseModel, Field, HttpUrl
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Any
@@ -87,7 +87,7 @@ async def local_extract(note_id: int, db: AsyncSession = Depends(get_db)):
 
 @router.post("/ai/cloud/summarize/{note_id}")
 @router.post("/notes/{note_id}/ai/summarize")
-async def cloud_summarize(note_id: int, db: AsyncSession = Depends(get_db)):
+async def cloud_summarize(note_id: int, request: Request, db: AsyncSession = Depends(get_db)):
     note = await crud.get_note(db, note_id)
     if not note:
         raise HTTPException(status_code=404, detail="笔记不存在")
@@ -99,6 +99,10 @@ async def cloud_summarize(note_id: int, db: AsyncSession = Depends(get_db)):
     provider_url = (await crud.get_setting(db, "ai.provider_url") or "").strip()
     provider_key = (await crud.get_setting(db, "ai.api_key") or os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY") or "").strip()
     model_name = (await crud.get_setting(db, "ai.model_name") or "deepseek-chat").strip()
+
+    header_key = (request.headers.get("x-ai-api-key") or "").strip()
+    if header_key:
+        provider_key = header_key
 
     if not provider_key:
         fallback = _local_fallback_summary(text)

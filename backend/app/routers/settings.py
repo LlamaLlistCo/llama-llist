@@ -3,6 +3,7 @@ from pydantic import BaseModel, HttpUrl
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Any
 import httpx
+import json
 
 from app import crud, schemas
 from app.database import get_db
@@ -20,6 +21,29 @@ class AIModelCheckPayload(BaseModel):
     provider_url: str
     api_key: str
     model_name: str
+
+
+def _maybe_decode_obfuscated_key(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = (value or "").strip()
+    if not text:
+        return ""
+
+    if not (text.startswith("[") and text.endswith("]")):
+        return text
+
+    try:
+        arr = json.loads(text)
+        if not isinstance(arr, list):
+            return text
+        if len(arr) == 0:
+            return ""
+
+        s = "".join([chr(int(x) & 0xFF) for x in arr])
+        return s
+    except Exception:
+        return text
 
 
 @router.get('/settings/theme')
@@ -65,7 +89,7 @@ async def get_ai_settings(db: AsyncSession = Depends(get_db)):
 @router.post('/settings/ai')
 async def set_ai_settings(payload: AISettingsPayload, db: AsyncSession = Depends(get_db)):
     provider = payload.provider_url
-    key = payload.api_key
+    key = _maybe_decode_obfuscated_key(payload.api_key)
     model_name = payload.model_name
     if provider is not None:
         await crud.set_setting(db, 'ai.provider_url', provider)
@@ -79,7 +103,7 @@ async def set_ai_settings(payload: AISettingsPayload, db: AsyncSession = Depends
 @router.post('/settings/ai/check')
 async def check_ai_settings(payload: AIModelCheckPayload):
     provider = (payload.provider_url or '').strip()
-    api_key = (payload.api_key or '').strip()
+    api_key = (_maybe_decode_obfuscated_key(payload.api_key) or '').strip()
 
     model_name = (payload.model_name or '').strip()
 

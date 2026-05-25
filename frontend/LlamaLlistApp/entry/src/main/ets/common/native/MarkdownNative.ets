@@ -18,6 +18,8 @@ export interface MarkdownNativeApi {
   parseMarkdown(markdown: string): MarkdownDocument;
   renderMarkdownToPlainText(markdown: string): string;
   exportMarkdown(title: string, summary: string, markdown: string): string;
+  encryptApiKey(key: string, salt: string): number[];
+  decryptApiKey(bytes: number[], salt: string): string;
   // legacy
   extractKeywords(text: string, topK: number): string[];
 }
@@ -71,6 +73,27 @@ export function exportMarkdownNative(title: string, summary: string, markdown: s
     const s = (summary ?? '').trim();
     const body = (markdown ?? '').toString();
     return `# ${t}\n\n${s ? `> ${s}\n\n` : ''}${body}`;
+  }
+}
+
+export function encryptApiKeyNative(key: string, salt: string): number[] {
+  if (!nativeApi) return [];
+  const v = (key ?? '').trim();
+  if (!v) return [];
+  try {
+    return nativeApi.encryptApiKey(v, (salt ?? '').toString());
+  } catch (_) {
+    return [];
+  }
+}
+
+export function decryptApiKeyNative(bytes: number[], salt: string): string {
+  if (!nativeApi) return '';
+  if (!bytes || bytes.length === 0) return '';
+  try {
+    return nativeApi.decryptApiKey(bytes, (salt ?? '').toString());
+  } catch (_) {
+    return '';
   }
 }
 

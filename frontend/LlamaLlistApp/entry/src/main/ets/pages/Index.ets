@@ -4,6 +4,7 @@ import { Tag } from '../models/Tag';
 import { Todo, TodoStatus, TodoPriority } from '../models/Todo';
 import { THEMES, ThemeConfig } from '../common/constants/Theme';
 import { appTheme } from '../common/constants/ThemeManager';
+import { encryptApiKeyNative, decryptApiKeyNative } from '../common/native/MarkdownNative';
 import router from '@ohos.router';
 import promptAction from '@ohos.promptAction';
 
@@ -1307,8 +1308,7 @@ struct Index {
       });
       this.settingsDialogController.open();
     } catch (e) {
-      const error = e as Error;
-      console.error('加载 AI 设置失败', error.message);
+      console.error('加载 AI 设置失败', `${e}`);
       promptAction.showToast({ message: '加载设置失败' });
     }
   }
@@ -1316,7 +1316,12 @@ struct Index {
   async saveSettings(providerUrl: string, modelName: string, apiKey: string): Promise<void> {
     try {
       const payload: AISettingsPayload = { provider_url: providerUrl, model_name: modelName };
-      if (apiKey && apiKey.trim()) payload.api_key = apiKey.trim();
+      const trimmed = (apiKey || '').trim();
+      if (trimmed) {
+        const salt = `${providerUrl}|${modelName}`;
+        const enc = encryptApiKeyNative(trimmed, salt);
+        payload.api_key = enc.length > 0 ? JSON.stringify(enc) : '';
+      }
       await request<object>('/settings/ai', 'POST', payload);
       this.aiProviderUrl = providerUrl;
       this.aiModelName = modelName;
@@ -1325,8 +1330,7 @@ struct Index {
         this.settingsDialogController.close();
       }
     } catch (e) {
-      const error = e as Error;
-      console.error('保存 AI 设置失败', error.message);
+      console.error('保存 AI 设置失败', `${e}`);
       promptAction.showToast({ message: '保存失败' });
     }
   }
@@ -1339,12 +1343,13 @@ struct Index {
       throw new Error('请填写模型名称、接口地址与 Key');
     }
     try {
-      const payload: AIModelCheckPayload = { provider_url: url, model_name: model, api_key: key };
+      const salt = `${url}|${model}`;
+      const enc = encryptApiKeyNative(key, salt);
+      const payload: AIModelCheckPayload = { provider_url: url, model_name: model, api_key: enc.length > 0 ? JSON.stringify(enc) : '' };
       await request<object>('/settings/ai/check', 'POST', payload);
     } catch (e) {
-      const error = e as Error;
-      console.error('模型检测失败', error.message);
-      throw new Error(error.message || '连接失败');
+      console.error('模型检测失败', `${e}`);
+      throw new Error(`${e}` || '连接失败');
     }
   }
 
@@ -1759,13 +1764,21 @@ struct SettingsDialog {
             }
             this.checkResultText = '连接测试中...';
             try {
+              const url = this.localUrl.trim();
+              const model = this.localModel.trim();
+              const key = this.localKey.trim();
+              if (!url || !model || !key) {
+                this.checkResultSuccess = false;
+                this.checkResultText = '请完整填写模型名称、接口地址与 Key';
+                return;
+              }
+              this.checkResultText = '连接测试中...';
               await this.onCheck(url, model, key);
               this.checkResultSuccess = true;
               this.checkResultText = '连接成功';
             } catch (e) {
-              const error = e as Error;
               this.checkResultSuccess = false;
-              this.checkResultText = error.message || '连接失败';
+              this.checkResultText = `${e}` || '连接失败';
             }
           })
         Button('保存')
@@ -1776,9 +1789,8 @@ struct SettingsDialog {
               await this.onSave(this.localUrl, this.localModel, this.localKey);
               this.controller.close();
             } catch (e) {
-              const error = e as Error;
               this.checkResultSuccess = false;
-              this.checkResultText = error.message || '保存失败';
+              this.checkResultText = `${e}` || '保存失败';
             }
           })
       }

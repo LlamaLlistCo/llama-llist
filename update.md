@@ -53,9 +53,22 @@
 - `backend/app/routers/files.py`
 - `backend/app/routers/ai.py`
 
----
+### 5) 安全性：AI API Key 安全存储（C++ Native 混淆）
 
-## 三、任务二：全场景适配（Cross-Device Adaptation）
+- 目标：避免前端/后端链路中直接以明文形式持久化保存 API Key，演示“敏感数据 Native 侧处理”的原生底层增强能力。
+- 实现：在 `keyword_napi` 模块新增 `encryptApiKey/decryptApiKey`，由 C++ 对 API Key 做轻量混淆（salt 派生 + XOR 字节处理），ArkTS 侧仅传输/保存混淆后的字节数组（序列化为 JSON 数组字符串）。
+- 接入点：
+  - 前端「AI 设置中心」保存/测试连接时：将输入的 Key 用 Native `encryptApiKeyNative(key, salt)` 处理后再提交。
+  - 后端接收 `api_key` 字段时：若为 JSON 数组字符串则解码为字节串并存储（避免直接接收明文）；`/settings/ai/check` 同样支持该格式。
+  - 云端摘要接口额外支持 `x-ai-api-key` 请求头覆盖（用于“请求携带 Key，不落库”的演示路径）。
+
+**对应文件**：
+- `frontend/LlamaLlistApp/entry/src/main/cpp/keyword_napi.cpp`（新增 encrypt/decrypt NAPI 导出）
+- `frontend/LlamaLlistApp/entry/src/main/ets/common/native/MarkdownNative.ets`（新增 encryptApiKeyNative/decryptApiKeyNative）
+- `frontend/LlamaLlistApp/entry/src/main/ets/pages/Index.ets`（设置中心保存/测试连接时改为提交混淆 Key）
+- `backend/app/routers/settings.py`（接收混淆 Key 的解码逻辑）
+- `backend/app/routers/ai.py`（支持请求头携带 Key 覆盖）
+
 
 ### 1) 手机/平板双设备形态支持
 
