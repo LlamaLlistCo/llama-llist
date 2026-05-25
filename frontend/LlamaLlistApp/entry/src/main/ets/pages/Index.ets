@@ -4,6 +4,7 @@ import { Tag } from '../models/Tag';
 import { Todo, TodoStatus, TodoPriority } from '../models/Todo';
 import { THEMES, ThemeConfig } from '../common/constants/Theme';
 import { appTheme } from '../common/constants/ThemeManager';
+import { encryptApiKeyNative, decryptApiKeyNative } from '../common/native/MarkdownNative';
 import router from '@ohos.router';
 import promptAction from '@ohos.promptAction';
 
@@ -34,11 +35,19 @@ interface DialogResult {
 
 interface AISettingsResponse {
   provider_url: string;
+  model_name: string;
 }
 
 interface AISettingsPayload {
   provider_url: string;
+  model_name: string;
   api_key?: string;
+}
+
+interface AIModelCheckPayload {
+  provider_url: string;
+  model_name: string;
+  api_key: string;
 }
 
 @Entry
@@ -50,8 +59,11 @@ struct Index {
   private controller: TabsController = new TabsController();
 
   @State selectedTagId: number | null = null;
+  @State selectedNoteId: number | null = null;
+  @State notesPaneWidth: number = 0;
   @State selectedCategory: number = 0;
   @State aiProviderUrl: string = '';
+  @State aiModelName: string = 'deepseek-chat';
   @State aiApiKeyInput: string = '';
   @State settingsDialogController: CustomDialogController | null = null;
   @State themeDialogController: CustomDialogController | null = null;
@@ -471,6 +483,19 @@ struct Index {
     return this.themeCoverResource();
   }
 
+  private isWideLayout(): boolean {
+    return this.notesPaneWidth >= 900;
+  }
+
+  private currentSelectedNote(): Note | null {
+    if (this.notes.length === 0) return null;
+    if (this.selectedNoteId !== null) {
+      const found = this.notes.find((n: Note) => n.id === this.selectedNoteId);
+      if (found) return found;
+    }
+    return this.notes[0];
+  }
+
   private firstImagePath(note: Note): string {
     if (!note.image_paths || note.image_paths.trim() === '') {
       return '';
@@ -492,7 +517,7 @@ struct Index {
 
         TabContent() {
           this.PackSection()
-        }.tabBar(this.TabBuilder('行囊', 2, 'sys.symbol.person_crop_circle'))
+        }.tabBar(this.TabBuilder('行囊', 2, 'sys.symbol.person'))
       }
       .onChange((index: number) => {
         this.currentIndex = index;
@@ -606,6 +631,51 @@ struct Index {
 
         if (this.notes.length === 0) {
           this.EmptyState()
+        } else if (this.isWideLayout()) {
+          Row({ space: 14 }) {
+            List({ space: 16 }) {
+              ForEach(this.notes, (note: Note) => {
+                ListItem() {
+                  this.NoteCard(note)
+                }
+                .backgroundColor(this.selectedNoteId === note.id ? this.themeSoft : '#00FFFFFF')
+                .borderRadius(18)
+                .border({ width: this.selectedNoteId === note.id ? 2 : 0, color: this.themePrimary })
+                .padding(2)
+                .swipeAction({
+                  end: {
+                    builder: () => { this.noteSwipeBuilder(note.id) },
+                    onAction: () => {},
+                    actionAreaDistance: 80,
+                  },
+                  edgeEffect: SwipeEdgeEffect.Spring
+                })
+                .onClick(() => {
+                  if (this.selectedNoteId === note.id) {
+                    router.pushUrl({ url: 'pages/NoteEdit', params: { id: note.id } });
+                    return;
+                  }
+                  this.selectedNoteId = note.id;
+                })
+              }, (item: Note) => item.id.toString())
+            }
+            .layoutWeight(1)
+            .scrollBar(BarState.Off)
+            .edgeEffect(EdgeEffect.Spring)
+
+            Column() {
+              Scroll() {
+                this.NoteDetailPane(this.currentSelectedNote())
+              }
+              .scrollable(ScrollDirection.Vertical)
+              .scrollBar(BarState.Auto)
+              .edgeEffect(EdgeEffect.Spring)
+              .layoutWeight(1)
+            }
+            .layoutWeight(1)
+          }
+          .layoutWeight(1)
+          .padding({ left: 20, right: 20, top: 2, bottom: 0 })
         } else {
           List({ space: 16 }) {
             ForEach(this.notes, (note: Note) => {
@@ -633,6 +703,9 @@ struct Index {
       }
       .width('100%')
       .height('100%')
+      .onAreaChange((_: Area, area: Area) => {
+        this.notesPaneWidth = Number(area.width);
+      })
 
       Button({ type: ButtonType.Circle }) {
         Text('+').fontSize(28).fontColor('#FFF')
@@ -821,6 +894,85 @@ struct Index {
     .padding({ top: 11, bottom: 11 })
     .backgroundColor(bg)
     .borderRadius(16)
+  }
+
+  @Builder
+  NoteDetailPane(note: Note | null): void {
+    Column({ space: 12 }) {
+      if (!note) {
+        Column({ space: 8 }) {
+          Text('请选择一条笔记')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(this.themeText)
+          Text('左侧点击笔记后在这里查看详情')
+            .fontSize(13)
+            .fontColor(this.themeSecondary)
+        }
+        .width('100%')
+        .padding({ top: 30 })
+        .alignItems(HorizontalAlign.Start)
+      } else {
+        Text(note.title)
+          .fontSize(24)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.themeText)
+          .width('100%')
+
+        Row({ space: 8 }) {
+          Text(new Date(note.updated_at ?? note.created_at).toLocaleDateString())
+            .fontSize(12)
+            .fontColor(this.themeSecondary)
+
+          if (note.tag_id && this.tagNameById(note.tag_id)) {
+            Text(this.tagNameById(note.tag_id))
+              .fontSize(11)
+              .fontColor(this.themePrimary)
+              .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+              .backgroundColor(this.themeSoft)
+              .borderRadius(10)
+          }
+        }
+        .width('100%')
+
+        if (note.summary && note.summary.trim() !== '') {
+          Text(note.summary)
+            .fontSize(14)
+            .lineHeight(22)
+            .fontColor(this.themeText)
+            .width('100%')
+            .padding(12)
+            .backgroundColor(this.themeSoft)
+            .borderRadius(12)
+        }
+
+        Text(note.content && note.content.trim() !== '' ? note.content : '暂无正文内容')
+          .fontSize(14)
+          .lineHeight(22)
+          .fontColor(this.themeText)
+          .width('100%')
+
+        Row({ space: 10 }) {
+          Button('编辑')
+            .fontSize(13)
+            .fontColor('#FFFFFF')
+            .backgroundColor(this.themePrimary)
+            .borderRadius(12)
+            .onClick(() => router.pushUrl({ url: 'pages/NoteEdit', params: { id: note.id } }))
+          Button('搜索相关')
+            .fontSize(13)
+            .fontColor(this.themePrimary)
+            .backgroundColor(this.themeSoft)
+            .borderRadius(12)
+            .onClick(() => router.pushUrl({ url: 'pages/SearchPage' }))
+        }
+      }
+    }
+    .width('100%')
+    .padding(18)
+    .backgroundColor(this.themeCard)
+    .borderRadius(20)
+    .shadow({ radius: 10, color: '#104A3933', offsetY: 3 })
   }
 
   @Builder
@@ -1132,6 +1284,11 @@ struct Index {
       } else {
         this.aiProviderUrl = '';
       }
+      if (data && typeof data.model_name === 'string' && data.model_name.trim()) {
+        this.aiModelName = data.model_name;
+      } else {
+        this.aiModelName = 'deepseek-chat';
+      }
       this.aiApiKeyInput = '';
       if (this.settingsDialogController) {
         this.settingsDialogController.close();
@@ -1139,8 +1296,10 @@ struct Index {
       this.settingsDialogController = new CustomDialogController({
         builder: SettingsDialog({
           aiProviderUrl: this.aiProviderUrl,
+          aiModelName: this.aiModelName,
           aiApiKeyInput: this.aiApiKeyInput,
-          onSave: (url: string, key: string) => this.saveSettings(url, key),
+          onSave: (url: string, model: string, key: string) => this.saveSettings(url, model, key),
+          onCheck: (url: string, model: string, key: string) => this.checkAIModel(url, model, key),
           onCancel: () => {}
         }),
         autoCancel: true,
@@ -1149,25 +1308,48 @@ struct Index {
       });
       this.settingsDialogController.open();
     } catch (e) {
-      const error = e as Error;
-      console.error('加载 AI 设置失败', error.message);
+      console.error('加载 AI 设置失败', `${e}`);
       promptAction.showToast({ message: '加载设置失败' });
     }
   }
 
-  async saveSettings(providerUrl: string, apiKey: string): Promise<void> {
+  async saveSettings(providerUrl: string, modelName: string, apiKey: string): Promise<void> {
     try {
-      const payload: AISettingsPayload = { provider_url: providerUrl };
-      if (apiKey && apiKey.trim()) payload.api_key = apiKey.trim();
+      const payload: AISettingsPayload = { provider_url: providerUrl, model_name: modelName };
+      const trimmed = (apiKey || '').trim();
+      if (trimmed) {
+        const salt = `${providerUrl}|${modelName}`;
+        const enc = encryptApiKeyNative(trimmed, salt);
+        payload.api_key = enc.length > 0 ? JSON.stringify(enc) : '';
+      }
       await request<object>('/settings/ai', 'POST', payload);
+      this.aiProviderUrl = providerUrl;
+      this.aiModelName = modelName;
       promptAction.showToast({ message: 'AI 设置已保存' });
       if (this.settingsDialogController) {
         this.settingsDialogController.close();
       }
     } catch (e) {
-      const error = e as Error;
-      console.error('保存 AI 设置失败', error.message);
+      console.error('保存 AI 设置失败', `${e}`);
       promptAction.showToast({ message: '保存失败' });
+    }
+  }
+
+  async checkAIModel(providerUrl: string, modelName: string, apiKey: string): Promise<void> {
+    const url = providerUrl.trim();
+    const model = modelName.trim();
+    const key = apiKey.trim();
+    if (!url || !model || !key) {
+      throw new Error('请填写模型名称、接口地址与 Key');
+    }
+    try {
+      const salt = `${url}|${model}`;
+      const enc = encryptApiKeyNative(key, salt);
+      const payload: AIModelCheckPayload = { provider_url: url, model_name: model, api_key: enc.length > 0 ? JSON.stringify(enc) : '' };
+      await request<object>('/settings/ai/check', 'POST', payload);
+    } catch (e) {
+      console.error('模型检测失败', `${e}`);
+      throw new Error(`${e}` || '连接失败');
     }
   }
 
@@ -1512,15 +1694,21 @@ struct Index {
 struct SettingsDialog {
   controller: CustomDialogController = new CustomDialogController({ builder: () => {} });
   aiProviderUrl: string = '';
+  aiModelName: string = 'deepseek-chat';
   aiApiKeyInput: string = '';
-  onSave: (url: string, key: string) => void = () => {};
+  onSave: (url: string, model: string, key: string) => Promise<void> = async () => {};
+  onCheck: (url: string, model: string, key: string) => Promise<void> = async () => {};
   onCancel: () => void = () => {};
 
   @State localUrl: string = '';
+  @State localModel: string = 'deepseek-chat';
   @State localKey: string = '';
+  @State checkResultText: string = '';
+  @State checkResultSuccess: boolean = false;
 
   aboutToAppear(): void {
     this.localUrl = this.aiProviderUrl;
+    this.localModel = this.aiModelName || 'deepseek-chat';
     this.localKey = this.aiApiKeyInput;
   }
 
@@ -1531,17 +1719,30 @@ struct SettingsDialog {
         .fontWeight(FontWeight.Bold)
         .padding({ top: 8 })
 
-      TextInput({ text: this.localUrl, placeholder: 'AI Provider URL (e.g. https://api.openai.com/v1/chat/completions)' })
+      TextInput({ text: this.localModel, placeholder: 'Model Name (e.g. deepseek-chat)' })
+        .fontSize(14)
+        .padding(8)
+        .backgroundColor('#FFF')
+        .onChange((v: string) => this.localModel = v)
+
+      TextInput({ text: this.localUrl, placeholder: 'Provider URL (e.g. https://api.openai.com/v1/chat/completions)' })
         .fontSize(14)
         .padding(8)
         .backgroundColor('#FFF')
         .onChange((v: string) => this.localUrl = v)
 
-      TextInput({ text: this.localKey, placeholder: 'API Key (will be stored on server)' })
+      TextInput({ text: this.localKey, placeholder: 'API Key' })
         .fontSize(14)
         .padding(8)
         .backgroundColor('#FFF')
         .onChange((v: string) => this.localKey = v)
+
+      if (this.checkResultText) {
+        Text(this.checkResultText)
+          .fontSize(13)
+          .fontColor(this.checkResultSuccess ? '#2E7D32' : '#C62828')
+          .width('100%')
+      }
 
       Row({ space: 8 }) {
         Button('取消')
@@ -1549,12 +1750,48 @@ struct SettingsDialog {
             this.onCancel();
             this.controller.close();
           })
+        Button('测试连接')
+          .backgroundColor('#EFEBE9')
+          .fontColor('#705C53')
+          .onClick(async () => {
+            const url = this.localUrl.trim();
+            const model = this.localModel.trim();
+            const key = this.localKey.trim();
+            if (!url || !model || !key) {
+              this.checkResultSuccess = false;
+              this.checkResultText = '请完整填写模型名称、接口地址与 Key';
+              return;
+            }
+            this.checkResultText = '连接测试中...';
+            try {
+              const url = this.localUrl.trim();
+              const model = this.localModel.trim();
+              const key = this.localKey.trim();
+              if (!url || !model || !key) {
+                this.checkResultSuccess = false;
+                this.checkResultText = '请完整填写模型名称、接口地址与 Key';
+                return;
+              }
+              this.checkResultText = '连接测试中...';
+              await this.onCheck(url, model, key);
+              this.checkResultSuccess = true;
+              this.checkResultText = '连接成功';
+            } catch (e) {
+              this.checkResultSuccess = false;
+              this.checkResultText = `${e}` || '连接失败';
+            }
+          })
         Button('保存')
           .backgroundColor('#705C53')
           .fontColor('#FFF')
-          .onClick(() => {
-            this.onSave(this.localUrl, this.localKey);
-            this.controller.close();
+          .onClick(async () => {
+            try {
+              await this.onSave(this.localUrl, this.localModel, this.localKey);
+              this.controller.close();
+            } catch (e) {
+              this.checkResultSuccess = false;
+              this.checkResultText = `${e}` || '保存失败';
+            }
           })
       }
     }
